@@ -1,6 +1,22 @@
 # 02 — Architecture
 
-## 1. System diagram
+This merchant is reachable by **two kinds of customer**, over two separate
+front doors that converge on the same guardrails:
+
+| | Human customer | Autonomous buyer agent |
+|---|---|---|
+| Entry point | `app/(chat)` → `/api/chat` | `/.well-known/agent-commerce.json` → `/api/agent/*` |
+| Speaks | natural language | JSON over HTTP |
+| Authority to spend | assumed; bounded by the ₹500 merchant cap | proven, via a signed spend mandate |
+| Over-limit path | can lift it by clicking the confirmation control | **refused** — no human is present to click anything |
+| Gate | `evaluateSpendCap()` | `evaluateMandate()` — stricter of mandate and merchant cap |
+| Audited as | `customer` | `buyer_agent` |
+
+Both paths re-derive prices from the catalog, both refuse server-side, and
+both write every decision — including refusals — to the same `audit_log`.
+See §5 for the agent channel and `DECISIONS.md` D-8 for why it exists.
+
+## 1. System diagram — human channel
 
 ```
 Customer (chat UI, Next.js App Router page)
@@ -109,13 +125,85 @@ Same as above through step 5, except at step 6: `lib/guardrails.ts` finds total 
 4. Customer accepts → orchestrator checks `orders.retry_count < 1` → **passes** → increments `retry_count`, logs `retry_attempted`, creates a new payment link
 5. If that also fails, or customer asks to retry again: `orders.retry_count` is already 1 → guardrails blocks it → logs `retry_blocked_max_reached` → agent tells customer to try a different payment method / contact support. No second automatic retry, ever.
 
-## 7. Environment variables (`.env.local`, never committed)
+## 6b. The agent channel: a machine buying from a machine
+
+Added in `DECISIONS.md` D-8, because Track 1 asks for a merchant that is
+"transactable by an AI buyer end to end" and a chat window is not that.
+
 ```
-ANTHROPIC_API_KEY=
+Autonomous buyer agent (any third party — scripts/buyer-agent.ts is one)
+   │
+   │ 1. GET /.well-known/agent-commerce.json
+   │      discovers the merchant, its endpoints, and its stated limits
+   │      BEFORE spending a request finding them out the hard way
+   ▼
+   │ 2. GET /api/agent/catalog
+   │      machine-readable: stable ids, integer paise, pairing relations
+   ▼
+   │ 3. POST /api/agent/quote          (mandate optional — preflight)
+   │      prices the basket, offers exactly one upsell, and — if a mandate
+   │      is presented — answers "would you accept this?" WITHOUT burning
+   │      the mandate's single-use nonce
+   ▼
+   │ 4. POST /api/agent/order          (mandate REQUIRED)
+   │      X-Agent-Mandate: <hmac-signed payload>
+   ▼
+Merchant, in this order and no other (app/api/agent/order/route.ts):
+   a. verify the mandate SIGNATURE          → 403 if it fails
+      (until the HMAC checks out, every number in that payload is
+       attacker-controlled and must not be read)
+   b. reject a replayed nonce               → 409 if already spent
+   c. re-derive every price from `catalog`  (buyer's quantities honoured,
+                                             buyer's prices discarded)
+   d. evaluateMandate(): stricter of        → 402 if either is exceeded
+      buyer mandate and merchant cap
+   e. create the Razorpay payment link
+   f. return a SIGNED RECEIPT the buyer can verify and reconcile
+```
+
+**Why a mandate at all.** `evaluateSpendCap()` protects a human from this
+merchant's agent. It says nothing about whether *this particular buyer* was
+authorised to spend this much. A merchant that ignores that will happily
+process a runaway buyer agent's order — which is precisely the merchant an AI
+buyer cannot safely transact with. The mandate carries the authority the
+buyer's principal actually delegated: ceiling, purpose, expiry, single use.
+
+**The deliberate asymmetry.** A human can lift an over-cap order by clicking
+`ConfirmationGate.tsx`. An autonomous buyer cannot, because there is no human
+present to click it — so exceeding the limit is **refused outright rather than
+queued**. This is stated in the manifest's `disclosures` block rather than
+quietly hidden, so a buyer agent can plan around it.
+
+**Refusals are audited exactly like acceptances** (`mandate_rejected`,
+`agent_order_refused`), under a distinct `buyer_agent` actor. A merchant that
+silently drops a refused agent order leaves the buyer's principal with no way
+to discover what their agent attempted.
+
+## 6c. LLM availability
+
+The provider layer (`lib/llm/`) rotates through a verified chain of Gemini
+models on quota exhaustion (`DECISIONS.md` D-9). Free-tier limits are enforced
+per model, so exhausting one does not exhaust the next — which is the
+difference between a demo that pauses for ~55 seconds and one that keeps
+serving. A failure of the whole chain degrades to a plain-language message and
+an `llm_call_failed` audit row, never an unhandled crash.
+
+## 7. Environment variables (`.env.local`, never committed)
+
+`.env.example` is the authoritative list and is tracked in git, with a comment
+per variable explaining when it is required. Summary:
+
+```
+LLM_PROVIDER=              # gemini (default) | ollama | anthropic
+GEMINI_API_KEY=            # required when LLM_PROVIDER=gemini
+ANTHROPIC_API_KEY=         # required only when LLM_PROVIDER=anthropic
+OLLAMA_MODEL=              # required only when LLM_PROVIDER=ollama
+OLLAMA_BASE_URL=
 NEXT_PUBLIC_SUPABASE_URL=
-NEXT_PUBLIC_SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_ROLE_KEY=
+NEXT_PUBLIC_SUPABASE_ANON_KEY=   # public by design, protected by RLS (D-2)
+SUPABASE_SERVICE_ROLE_KEY=       # server-only; the orchestrator's DB access
 RAZORPAY_KEY_ID=
 RAZORPAY_KEY_SECRET=
-RAZORPAY_WEBHOOK_SECRET=
+RAZORPAY_WEBHOOK_SECRET=         # required even locally, or the webhook throws
+MANDATE_SIGNING_SECRET=          # signs/verifies buyer mandates + receipts (D-8)
 ```
