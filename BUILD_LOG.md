@@ -437,3 +437,21 @@ This is the first time this project has proven the complete real-world path: Raz
 **Files touched:** none in the repo itself (infra/deployment only) — `PROGRESS_CHECKLIST.md` (Day 6 Vercel item checked off, webhook-proof line updated to reflect the permanent URL rather than just the tunnel).
 
 **Still open:** the local dev server + cloudflared tunnel are no longer needed for demo purposes — the Vercel deployment is now the source of truth. Remaining Day 6 items: backup demo video, README/PRD/pitch-deck finalization. The project's git history is still empty (`git log` shows no commits on `main` despite an `origin` remote already pointing at a GitHub repo) — worth deciding deliberately whether/when to make an initial commit and push, rather than leaving it unaddressed; not done in this session since commits/pushes are founder-initiated per this project's own working agreement.
+
+---
+
+## [Day 6, continued] — 2026-09-01 (version control: real commit history, pushed, CI deploy confirmed)
+
+**Worked on:** The project had been running entirely on live Vercel state and the live Supabase DB with **zero git commits** — an `origin` remote pointed at `github.com/aggamsingh/OrderMind`, but nothing had ever been committed or pushed. Founder asked for a real commit history rather than one bulk import, and for commits to continue as work lands.
+
+**Safety check before touching git at all:** found that the Vercel CLI's auto-appended `.gitignore` rule (`.env*`) was also excluding `.env.example`, which *should* be tracked — it carries no secrets, only the variable names a new developer or judge needs. Fixed with an explicit `!.env.example` negation, deduplicated the CLI's repeated `.vercel`/`.env*` entries, then verified via `git check-ignore` that `.env.local` stays ignored while `.env.example` becomes trackable. Also grepped the whole tree for real credential patterns (Anthropic keys, `rzp_test_` ids, Supabase JWTs) before staging anything, and again against the committed tree afterward — clean both times.
+
+**Result: 10 layered commits**, ordered so each builds on its dependencies rather than dumping the tree: scaffold → spec docs → DB schema/RLS → LLM provider layer → guardrails/Razorpay/audit → orchestrator → webhooks → UI → live test scripts → build/decisions logs + real audit export. Commit messages explain the *why* (the confirm-then-swap hole guardrails closes, why RLS has zero anon policies, why the webhook resolves orders via `receipt` rather than a stored id, why the session-isolation test is split out over Gemini's 15 req/min cap) rather than restating filenames.
+
+**One deliberate choice, worth stating plainly:** commits use honest current timestamps rather than being backdated to match the days the work actually happened. The work genuinely was done across 2026-08-30/09-01 and `BUILD_LOG.md` is the authentic day-by-day record; faking author dates to match would misrepresent when the commits themselves were created, which is not worth the cosmetic gain.
+
+**Pushed to `origin/main`** (remote was completely empty, so a clean first push). This **automatically triggered a git-based Vercel production deployment** — confirmed Ready in 23s, and re-verified the live site afterward rather than assuming: homepage 200, `/audit` 200, and the webhook endpoint still correctly rejecting a forged signature with 400 (not a 500), which also confirms production env vars survived the git-triggered build path.
+
+**Files touched:** `.gitignore` (`.env.example` negation + dedupe). Everything else was version-control work, not code changes.
+
+**Still open:** backup demo video and README/PRD/pitch-deck finalization are the last two Day 6 items. Note that pushing to `main` now auto-deploys to production — worth knowing before any further commits, since a broken push goes live.
