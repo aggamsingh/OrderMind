@@ -1,26 +1,175 @@
 @import "tailwindcss";
 
+/*
+ * Design tokens. Warm, café-adjacent neutrals with a saffron accent for the
+ * merchant brand, plus a strict semantic palette for the part that actually
+ * matters here: every money decision is colour-coded by outcome, so a judge
+ * scanning the audit trail can see "allowed / gated / refused" without
+ * reading a single word.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+  --bg: #faf8f5;
+  --bg-subtle: #f2eee8;
+  --surface: #ffffff;
+  --surface-2: #f7f4f0;
+  --border: #e5ded4;
+  --border-strong: #d5cabb;
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --text: #1c1917;
+  --text-muted: #78716c;
+  --text-faint: #a8a29e;
+
+  --accent: #b45309;
+  --accent-soft: #fef3c7;
+  --accent-border: #fcd34d;
+
+  --allow: #047857;
+  --allow-soft: #ecfdf5;
+  --allow-border: #a7f3d0;
+
+  --gate: #b45309;
+  --gate-soft: #fffbeb;
+  --gate-border: #fde68a;
+
+  --refuse: #b91c1c;
+  --refuse-soft: #fef2f2;
+  --refuse-border: #fecaca;
+
+  --agent: #4338ca;
+  --agent-soft: #eef2ff;
+  --agent-border: #c7d2fe;
+
+  --machine: #7e22ce;
+  --machine-soft: #faf5ff;
+  --machine-border: #e9d5ff;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --bg: #0c0a09;
+    --bg-subtle: #1c1917;
+    --surface: #17140f;
+    --surface-2: #221d17;
+    --border: #292524;
+    --border-strong: #44403c;
+
+    --text: #f5f5f4;
+    --text-muted: #a8a29e;
+    --text-faint: #78716c;
+
+    --accent: #fbbf24;
+    --accent-soft: #292013;
+    --accent-border: #78500f;
+
+    --allow: #34d399;
+    --allow-soft: #062d22;
+    --allow-border: #065f46;
+
+    --gate: #fbbf24;
+    --gate-soft: #2b2011;
+    --gate-border: #78500f;
+
+    --refuse: #f87171;
+    --refuse-soft: #2c1414;
+    --refuse-border: #7f1d1d;
+
+    --agent: #a5b4fc;
+    --agent-soft: #1a1a33;
+    --agent-border: #3730a3;
+
+    --machine: #d8b4fe;
+    --machine-soft: #241830;
+    --machine-border: #6b21a8;
   }
 }
 
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg-subtle: var(--bg-subtle);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-edge: var(--border);
+  --color-edge-strong: var(--border-strong);
+
+  --color-ink: var(--text);
+  --color-ink-muted: var(--text-muted);
+  --color-ink-faint: var(--text-faint);
+
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-edge: var(--accent-border);
+
+  --color-allow: var(--allow);
+  --color-allow-soft: var(--allow-soft);
+  --color-allow-edge: var(--allow-border);
+
+  --color-gate: var(--gate);
+  --color-gate-soft: var(--gate-soft);
+  --color-gate-edge: var(--gate-border);
+
+  --color-refuse: var(--refuse);
+  --color-refuse-soft: var(--refuse-soft);
+  --color-refuse-edge: var(--refuse-border);
+
+  --color-agent: var(--agent);
+  --color-agent-soft: var(--agent-soft);
+  --color-agent-edge: var(--agent-border);
+
+  --color-machine: var(--machine);
+  --color-machine-soft: var(--machine-soft);
+  --color-machine-edge: var(--machine-border);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Subtle entrance for streamed-in chat and audit rows. */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.animate-rise {
+  animation: rise 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+.animate-pulse-soft {
+  animation: pulse-soft 1.4s ease-in-out infinite;
+}
+
+/* Thin, unobtrusive scrollbars — these panes scroll a lot during a demo. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
 }

@@ -2,7 +2,7 @@
 
 import { useSearchParams } from "next/navigation";
 import { Suspense } from "react";
-import Link from "next/link";
+import AppShell from "@/components/AppShell";
 import AuditTimeline from "@/components/AuditTimeline";
 
 function AuditPageInner() {
@@ -10,26 +10,32 @@ function AuditPageInner() {
   const sessionId = searchParams.get("sessionId") ?? undefined;
 
   return (
-    <div className="mx-auto flex h-full w-full max-w-2xl flex-col gap-4 p-4">
-      <header className="flex items-center justify-between">
-        <h1 className="text-lg font-semibold">Audit trail</h1>
-        <Link href="/" className="text-sm text-blue-600 hover:underline">
-          ← Back to chat
-        </Link>
-      </header>
-      <p className="text-sm text-zinc-500">
-        {sessionId
-          ? `Showing events for session ${sessionId}. Refreshes every 3s.`
-          : "Showing the most recent events across all sessions. Refreshes every 3s."}
-      </p>
+    <AppShell
+      active="/audit"
+      title="Audit trail"
+      subtitle={
+        sessionId
+          ? "Every decision taken in this session, in order — including the ones where the system said no."
+          : "Every decision across all sessions, newest first — including the ones where the system said no."
+      }
+    >
+      {sessionId && (
+        <p className="rounded-lg border border-edge bg-surface-2 px-3 py-2 font-mono text-[11px] text-ink-faint">
+          session {sessionId}
+        </p>
+      )}
       <AuditTimeline sessionId={sessionId} />
-    </div>
+    </AppShell>
   );
 }
 
 export default function AuditPage() {
   return (
-    <Suspense fallback={<div className="p-4">Loading…</div>}>
+    <Suspense
+      fallback={
+        <div className="flex min-h-64 items-center justify-center text-sm text-ink-faint">Loading…</div>
+      }
+    >
       <AuditPageInner />
     </Suspense>
   );
