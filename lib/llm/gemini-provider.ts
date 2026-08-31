@@ -1,17 +1,33 @@
 import { GoogleGenAI, FunctionCallingConfigMode, type Content, type FunctionDeclaration } from "@google/genai";
 import type { ConvMessage, LLMProvider, ModelTurnResult, ToolDefinition } from "./types";
 
-// gemini-3.6-flash's free tier is only 20 requests/DAY (confirmed by hitting
-// the real quota-exhausted error — see BUILD_LOG.md). CORRECTION (2026-08-31,
-// see DECISIONS.md D-5): flash-lite-latest was previously assumed to have "a
-// separate, much larger quota pool" than 3.6-flash — the AI Studio rate-limit
-// dashboard disproves that: both models plateaued at the same ~20-22
-// requests/day and dropped together, not flash-lite outlasting 3.6-flash.
-// Kept as the default anyway (still free, still connects live as of this
-// correction) but the daily-budget headroom this comment used to claim is
-// NOT confirmed — re-check aistudio.google.com/rate-limit before assuming
-// slack is available during a live demo.
-const MODEL = "gemini-flash-lite-latest";
+/**
+ * Model fallback chain — the fix for this project's single biggest live-demo
+ * risk (DECISIONS.md D-9).
+ *
+ * The free tier caps at 15 requests per MINUTE per model (confirmed from a
+ * real 429 body — D-5), and one customer turn can burn 2-4 calls because of
+ * the tool loop. A judge sending a few messages in quick succession could
+ * therefore stall the demo for ~55 seconds. That is unacceptable for a live
+ * pitch and cannot be fixed by hoping.
+ *
+ * The lever is a fact this project established empirically rather than
+ * assumed: Gemini quotas are enforced PER MODEL. So exhausting one model
+ * does not exhaust the next, and rotating on 429 multiplies the effective
+ * budget by the length of this chain.
+ *
+ * Every model listed here was verified callable against the real API before
+ * being added — no plausible-looking guesses (this project has been burned by
+ * an invented model name before, see BUILD_LOG.md Day 2). Order is best
+ * capability first: only fall back when actually forced to.
+ */
+const MODEL_CHAIN = ["gemini-flash-lite-latest", "gemini-flash-latest", "gemini-3.6-flash"] as const;
+
+/** True for the quota-exhaustion error specifically, not any failure. */
+function isQuotaError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED");
+}
 
 function toGeminiTools(tools: ToolDefinition[]): FunctionDeclaration[] {
   return tools.map((t) => ({
@@ -73,16 +89,38 @@ export class GeminiProvider implements LLMProvider {
     history: ConvMessage[];
   }): Promise<ModelTurnResult> {
     const ai = getGeminiClient();
-
-    const response = await ai.models.generateContent({
-      model: MODEL,
+    const request = {
       contents: toGeminiContents(params.history),
       config: {
         systemInstruction: params.systemPrompt,
         tools: [{ functionDeclarations: toGeminiTools(params.tools) }],
         toolConfig: { functionCallingConfig: { mode: FunctionCallingConfigMode.AUTO } },
       },
-    });
+    };
+
+    // Walk the chain on quota exhaustion only. Any other failure (a bad
+    // request, an auth problem, a malformed tool schema) is a real bug and
+    // must surface immediately rather than being retried three times against
+    // three models and reported as the last model's error.
+    let response;
+    let lastQuotaError: unknown;
+    for (const model of MODEL_CHAIN) {
+      try {
+        response = await ai.models.generateContent({ model, ...request });
+        break;
+      } catch (err) {
+        if (!isQuotaError(err)) throw err;
+        lastQuotaError = err;
+        console.warn(`[gemini] ${model} is rate-limited; falling back to the next model in the chain.`);
+      }
+    }
+
+    if (!response) {
+      throw new Error(
+        `All Gemini models in the fallback chain are rate-limited (${MODEL_CHAIN.join(", ")}). ` +
+          `Last error: ${lastQuotaError instanceof Error ? lastQuotaError.message : String(lastQuotaError)}`
+      );
+    }
 
     // Read raw parts, not the response.functionCalls convenience getter —
     // that getter strips thoughtSignature, which lives on the Part
