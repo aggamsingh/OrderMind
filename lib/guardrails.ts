@@ -102,3 +102,93 @@ export function evaluateRetry(order: Order): RetryDecision {
     reason: `retry_count is already ${order.retry_count}, which meets the max of ${MAX_RETRIES}. No further automatic retry is permitted for this order.`,
   };
 }
+
+export type MandateDecision =
+  | {
+      outcome: "mandate_satisfied";
+      totalPaise: number;
+      bindingLimitPaise: number;
+      bindingLimit: "merchant_cap" | "buyer_mandate";
+      reason: string;
+    }
+  | {
+      outcome: "blocked_exceeds_buyer_mandate";
+      totalPaise: number;
+      bindingLimitPaise: number;
+      bindingLimit: "buyer_mandate";
+      reason: string;
+    }
+  | {
+      outcome: "blocked_exceeds_merchant_cap";
+      totalPaise: number;
+      bindingLimitPaise: number;
+      bindingLimit: "merchant_cap";
+      reason: string;
+    };
+
+/**
+ * The agent-to-agent gate: an autonomous buyer's order must satisfy BOTH
+ * limits, and the stricter one binds.
+ *
+ * Why both, rather than just the merchant's cap:
+ *  - The merchant cap (SPEND_CAP_PAISE) protects against *this* merchant's
+ *    agent running away with someone's money. It says nothing about whether
+ *    a given buyer was authorised for this amount.
+ *  - The buyer's mandate (max_amount_paise, verified by lib/mandate.ts)
+ *    carries the actual delegated authority its principal granted. A
+ *    merchant that ignores it will happily process a runaway buyer agent's
+ *    order — which is precisely the merchant an AI buyer cannot safely
+ *    transact with.
+ *
+ * Note the asymmetry with evaluateSpendCap(): over-cap orders from a HUMAN
+ * can be unblocked by that human clicking a confirmation control. An
+ * autonomous buyer has no such escape hatch here, deliberately — there is no
+ * human in the loop to click anything, so exceeding the mandate is simply
+ * refused. Raising the ceiling requires a fresh mandate from the principal,
+ * which is the whole point of the mandate existing.
+ *
+ * `totalPaise` must be recomputed from DB catalog prices by the caller —
+ * never taken from anything the buyer agent sent.
+ */
+export function evaluateMandate(totalPaise: number, mandateMaxPaise: number): MandateDecision {
+  const rupees = (paise: number) => `₹${(paise / 100).toFixed(2)}`;
+
+  if (totalPaise > mandateMaxPaise) {
+    return {
+      outcome: "blocked_exceeds_buyer_mandate",
+      totalPaise,
+      bindingLimitPaise: mandateMaxPaise,
+      bindingLimit: "buyer_mandate",
+      reason: `Order total ${rupees(totalPaise)} exceeds the buyer agent's own spend mandate of ${rupees(
+        mandateMaxPaise
+      )}. Refused — the buyer's principal did not delegate authority for this amount, and no human is present to raise it.`,
+    };
+  }
+
+  if (totalPaise > SPEND_CAP_PAISE) {
+    return {
+      outcome: "blocked_exceeds_merchant_cap",
+      totalPaise,
+      bindingLimitPaise: SPEND_CAP_PAISE,
+      bindingLimit: "merchant_cap",
+      reason: `Order total ${rupees(totalPaise)} is within the buyer's mandate but exceeds this merchant's ${rupees(
+        SPEND_CAP_PAISE
+      )} autonomous-order cap. Refused — an order this size requires a human confirmation this merchant cannot obtain from an autonomous buyer.`,
+    };
+  }
+
+  const bindingLimit = mandateMaxPaise <= SPEND_CAP_PAISE ? "buyer_mandate" : "merchant_cap";
+  const bindingLimitPaise = Math.min(mandateMaxPaise, SPEND_CAP_PAISE);
+
+  return {
+    outcome: "mandate_satisfied",
+    totalPaise,
+    bindingLimitPaise,
+    bindingLimit,
+    reason: `Order total ${rupees(totalPaise)} is within both the buyer's mandate (${rupees(
+      mandateMaxPaise
+    )}) and this merchant's autonomous cap (${rupees(SPEND_CAP_PAISE)}). Binding limit: ${
+      bindingLimit === "buyer_mandate" ? "the buyer's mandate" : "the merchant cap"
+    } at ${rupees(bindingLimitPaise)}.`,
+  };
+}

@@ -41,7 +41,11 @@ create table if not exists audit_log (
   id uuid primary key default gen_random_uuid(),
   session_id uuid not null references sessions(id),
   order_id uuid references orders(id),
-  actor text not null check (actor in ('customer', 'agent', 'orchestrator', 'razorpay_webhook')),
+  -- 'buyer_agent' is an autonomous machine buyer transacting through
+  -- /api/agent/* with a signed spend mandate. Kept distinct from 'customer'
+  -- (a human) on purpose: when the buyer is a program, the audit trail has to
+  -- say so. See DECISIONS.md D-8.
+  actor text not null check (actor in ('customer', 'agent', 'orchestrator', 'razorpay_webhook', 'buyer_agent')),
   action text not null,
   detail jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()

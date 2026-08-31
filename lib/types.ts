@@ -60,7 +60,15 @@ export type Order = {
   updated_at: string;
 };
 
-export type AuditActor = "customer" | "agent" | "orchestrator" | "razorpay_webhook";
+// "buyer_agent" is an autonomous machine buyer transacting via /api/agent/*
+// — deliberately distinct from "customer" (a human) so the audit trail shows
+// *who* acted, not just what happened. See DECISIONS.md D-8.
+export type AuditActor =
+  | "customer"
+  | "agent"
+  | "orchestrator"
+  | "razorpay_webhook"
+  | "buyer_agent";
 
 export type AuditLogRow = {
   id: string;
