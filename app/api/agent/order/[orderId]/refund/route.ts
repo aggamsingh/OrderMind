@@ -4,6 +4,7 @@ import { logAudit } from "@/lib/audit";
 import { evaluateRefund } from "@/lib/guardrails";
 import { verifyMandate, mandateForAudit, signReceipt } from "@/lib/mandate";
 import { getRazorpayClient } from "@/lib/razorpay";
+import { serializeError } from "@/lib/errors";
 import type { Order } from "@/lib/types";
 
 /**
@@ -208,14 +209,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ orderId: s
       receipt,
     });
   } catch (err) {
-    const detail =
-      typeof err === "object" && err !== null ? (err as Record<string, unknown>) : { raw: String(err) };
     await logAudit({
       sessionId: order.session_id,
       orderId: order.id,
       actor: "orchestrator",
       action: "refund_failed",
-      detail: { error: detail, payment_id: paymentId },
+      detail: { error: serializeError(err), payment_id: paymentId },
     });
     return NextResponse.json(
       { refunded: false, error: "refund_failed", message: "Razorpay rejected the refund." },

@@ -25,6 +25,7 @@
  *   npx tsx scripts/buyer-agent.ts --scenario tampered       # signature demo
  *   npx tsx scripts/buyer-agent.ts --scenario revoked        # principal pulls authority
  *   npx tsx scripts/buyer-agent.ts --scenario compare        # shop across merchants
+ *   npx tsx scripts/buyer-agent.ts --scenario split          # one budget, several merchants
  *   npx tsx scripts/buyer-agent.ts --merchant https://ordermind-gamma.vercel.app
  */
 import { config } from "dotenv";
@@ -236,6 +237,251 @@ async function compareAndBuy() {
 }
 
 /**
+ * Basket splitting: one goal, one budget, orders placed at MORE THAN ONE
+ * merchant because no single one can fulfil it.
+ *
+ * This is the case that breaks a naive buyer. Comparison shopping asks "who
+ * is cheapest?" and picks a winner. Splitting asks the harder question — "who
+ * has each piece, and can I stay inside my budget across all of them?" — and
+ * it collides directly with the mandate design, because mandates are
+ * SINGLE-USE. Two merchants means two orders means two mandates, and the
+ * agent must not be able to spend its budget twice by holding two.
+ *
+ * The rule enforced here: each merchant gets a mandate capped at exactly that
+ * merchant's subtotal, and the sum of those ceilings never exceeds the one
+ * budget the principal approved. The agent cannot inflate any single ceiling
+ * without the merchant refusing it, and cannot inflate the total without
+ * exceeding what it was granted.
+ *
+ * Quote everything BEFORE ordering anything, deliberately: discovering
+ * halfway through that merchant two will refuse you, after merchant one is
+ * already committed, is the failure mode worth designing out rather than
+ * apologising for.
+ */
+async function splitBasket() {
+  console.log(c.bold("\n══════ AUTONOMOUS BUYER AGENT — SPLIT ACROSS MERCHANTS ══════"));
+  console.log(`${c.dim("goal    ")} "${GOAL}"`);
+  console.log(`${c.dim("budget  ")} ${rupees(BUDGET_PAISE)} ${c.dim("(one budget, however many merchants)")}`);
+
+  say("Discovering the market", "GET /api/agent/merchants");
+  const dir = (await (await fetch(`${MERCHANT}/api/agent/merchants`)).json()) as {
+    merchants: { id: string; name: string; tagline: string }[];
+  };
+
+  // Build one combined view of everything purchasable, tagged by who sells it,
+  // so the agent can reason about the goal without pre-committing to a shop.
+  const stock: (CatalogItem & { merchant_id: string; merchant_name: string })[] = [];
+  const capById = new Map<string, number>();
+
+  for (const m of dir.merchants) {
+    const manifest = (await (
+      await fetch(`${MERCHANT}/.well-known/agent-commerce.json?merchant=${m.id}`)
+    ).json()) as Manifest;
+    capById.set(m.id, manifest.terms.autonomous_order_cap_paise);
+
+    const catalog = (await (
+      await fetch(`${MERCHANT}/api/agent/catalog?merchant=${m.id}`)
+    ).json()) as { items: CatalogItem[] };
+
+    for (const item of catalog.items) {
+      stock.push({ ...item, merchant_id: m.id, merchant_name: m.name });
+    }
+    console.log(`    ${m.name}: ${catalog.items.length} items, cap ${rupees(capById.get(m.id)!)}`);
+  }
+
+  say("Planning across the whole market", "the agent may pick from any merchant");
+  const chosen = await decideAcrossMerchants(stock);
+  if (chosen.length === 0) {
+    console.log(c.red("    nothing suitable found"));
+    return;
+  }
+
+  // Group the plan by who actually sells each line.
+  const groups = new Map<string, { merchant_id: string; merchant_name: string; items: typeof chosen }>();
+  for (const line of chosen) {
+    const item = stock.find((s) => s.id === line.catalog_id)!;
+    const g = groups.get(item.merchant_id) ?? {
+      merchant_id: item.merchant_id,
+      merchant_name: item.merchant_name,
+      items: [],
+    };
+    g.items.push(line);
+    groups.set(item.merchant_id, g);
+  }
+
+  for (const g of groups.values()) {
+    console.log(
+      `    ${c.cyan(g.merchant_name)}: ${g.items
+        .map((i) => `${i.qty}× ${stock.find((s) => s.id === i.catalog_id)?.name}`)
+        .join(", ")}`
+    );
+  }
+
+  if (groups.size === 1) {
+    console.log(
+      c.dim("\n    One merchant covers the whole basket — no split needed. Try a goal that spans\n    both ranges (e.g. \"chai and something sweet\") to force a split.")
+    );
+  }
+
+  // ---- Quote every leg before committing to any of them ----
+  say("Quoting every leg before ordering any");
+  const legs: { id: string; name: string; subtotal: number; items: typeof chosen; cap: number }[] = [];
+
+  for (const g of groups.values()) {
+    const res = await fetch(`${MERCHANT}/api/agent/quote?merchant=${g.merchant_id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items: g.items.map((i) => ({ catalog_id: i.catalog_id, qty: i.qty })) }),
+    });
+    const quote = await res.json();
+    if (!res.ok) {
+      console.log(`    ${c.red(`${g.merchant_name}: could not quote — ${quote.error}`)}`);
+      return;
+    }
+    const cap = capById.get(g.merchant_id)!;
+    const overCap = quote.subtotal_paise > cap;
+    console.log(
+      `    ${g.merchant_name.padEnd(24)} ${rupees(quote.subtotal_paise).padStart(9)}  ${
+        overCap ? c.red(`over that merchant's ${rupees(cap)} cap`) : c.green("within cap")
+      }`
+    );
+    if (overCap) {
+      console.log(c.red("\n    Aborting before any order is placed. Nothing was committed."));
+      return;
+    }
+    legs.push({
+      id: g.merchant_id,
+      name: g.merchant_name,
+      subtotal: quote.subtotal_paise,
+      items: g.items,
+      cap,
+    });
+  }
+
+  const grandTotal = legs.reduce((s, l) => s + l.subtotal, 0);
+  console.log(`\n    combined: ${c.bold(rupees(grandTotal))} against a ${rupees(BUDGET_PAISE)} budget`);
+
+  if (grandTotal > BUDGET_PAISE) {
+    console.log(
+      c.red(
+        `    Over budget by ${rupees(grandTotal - BUDGET_PAISE)}. Refusing to place ANY order —\n    splitting a purchase must never be a way to spend more than was approved.`
+      )
+    );
+    return;
+  }
+
+  // ---- One mandate per leg, each capped at exactly that leg's subtotal ----
+  say("Drawing one mandate per merchant", "each capped at that leg only, summing within budget");
+  const placed: { name: string; orderId: string; total: number; link: string }[] = [];
+
+  for (const leg of legs) {
+    const mandate = issueMandate({
+      buyer_agent_id: BUYER_AGENT_ID,
+      principal: PRINCIPAL,
+      // Not the whole budget — only what this leg costs. A leaked or misused
+      // mandate can then do no more damage than the leg it was drawn for.
+      max_amount_paise: leg.subtotal,
+      purpose: `${GOAL} (split: ${leg.name})`,
+    });
+    console.log(`    ${leg.name.padEnd(24)} mandate ceiling ${rupees(leg.subtotal)}`);
+
+    const res = await fetch(`${MERCHANT}/api/agent/order?merchant=${leg.id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Agent-Mandate": mandate.token },
+      body: JSON.stringify({
+        items: leg.items.map((i) => ({ catalog_id: i.catalog_id, qty: i.qty })),
+        buyer_note: `Split purchase for: ${GOAL}`,
+      }),
+    });
+    const data = await res.json();
+
+    if (!res.ok || !data.accepted) {
+      console.log(`    ${c.red(`${leg.name}: REFUSED — ${data.error}`)}`);
+      console.log(`    ${data.message ?? ""}`);
+
+      if (placed.length > 0) {
+        // Honest handling of a genuinely hard problem: this is a distributed
+        // transaction and there is no two-phase commit across independent
+        // merchants. What saves us is the authorize/capture split — the
+        // earlier legs are authorised but NOT captured, so abandoning them
+        // moves no money at all. Nothing to unwind, precisely because nothing
+        // was taken yet.
+        console.log(
+          c.yellow(
+            `\n    ${placed.length} earlier leg(s) were already authorised. They are NOT captured —\n    abandoning them costs nothing, because no money has moved. This is why\n    authorising and capturing are separate steps.`
+          )
+        );
+        for (const p of placed) console.log(c.dim(`      abandoned: ${p.name} ${rupees(p.total)} (${p.orderId})`));
+      }
+      return;
+    }
+
+    placed.push({
+      name: leg.name,
+      orderId: data.order_id,
+      total: data.total_paise,
+      link: data.payment_link,
+    });
+    console.log(`    ${c.green("accepted")} — ${data.order_id}`);
+  }
+
+  say("Split purchase complete");
+  for (const p of placed) {
+    console.log(`    ${p.name.padEnd(24)} ${rupees(p.total).padStart(9)}  ${c.cyan(p.link)}`);
+  }
+  console.log(
+    `\n    ${c.bold(rupees(placed.reduce((s, p) => s + p.total, 0)))} across ${placed.length} merchants, ` +
+      `inside one ${rupees(BUDGET_PAISE)} mandate budget.`
+  );
+}
+
+/**
+ * Chooses items across the WHOLE market rather than one merchant's shelf.
+ * The merchant each item belongs to is shown, so the model can deliberately
+ * span shops when the goal needs it — but it is never asked to think about
+ * budgets or caps, which are enforced afterwards from real quotes.
+ */
+async function decideAcrossMerchants(
+  stock: (CatalogItem & { merchant_id: string; merchant_name: string })[]
+): Promise<{ catalog_id: string; qty: number; why: string }[]> {
+  const menu = stock
+    .map((i) => `- ${i.id} | ${i.name} | ${rupees(i.unit_price_paise)} | sold by ${i.merchant_name} | ${i.description}`)
+    .join("\n");
+
+  try {
+    const turn = await getLLMProvider().runTurn({
+      systemPrompt: `You are an autonomous purchasing agent shopping across SEVERAL merchants at once.
+Budget: ${rupees(BUDGET_PAISE)} in total across all of them.
+Choose ONLY from the listed items, using exact ids. You may freely pick items sold by different
+merchants in the same basket — buying from more than one is expected when the goal needs it.
+Keep the basket small and genuinely suited to the goal. Call choose_items exactly once.`,
+      tools: SELECT_TOOL,
+      history: [{ role: "user", content: `Goal: "${GOAL}"\n\nAvailable across all merchants:\n${menu}` }],
+    });
+
+    const raw = turn.toolCalls.find((t) => t.name === "choose_items")?.input?.items;
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (Array.isArray(parsed)) {
+      const valid = parsed.filter((p: { catalog_id: string }) => stock.some((s) => s.id === p.catalog_id));
+      if (valid.length > 0) return valid;
+    }
+  } catch {
+    // Fall through to a deterministic pick rather than dying mid-demo.
+  }
+
+  // Fallback that still spans merchants: the cheapest item from each.
+  const byMerchant = new Map<string, (typeof stock)[number]>();
+  for (const item of [...stock].sort((a, b) => a.unit_price_paise - b.unit_price_paise)) {
+    if (!byMerchant.has(item.merchant_id)) byMerchant.set(item.merchant_id, item);
+  }
+  return [...byMerchant.values()].map((i) => ({
+    catalog_id: i.id,
+    qty: 1,
+    why: "fallback selection",
+  }));
+}
+
+/**
  * The principal changes their mind mid-flight.
  *
  * A signed mandate is a bearer token, so the interesting question is not "can
@@ -315,6 +561,7 @@ async function revokedRun() {
 async function main() {
   if (SCENARIO === "compare") return compareAndBuy();
   if (SCENARIO === "revoked") return revokedRun();
+  if (SCENARIO === "split") return splitBasket();
 
   console.log(c.bold("\n══════ AUTONOMOUS BUYER AGENT ══════"));
   console.log(`${c.dim("agent   ")} ${BUYER_AGENT_ID}`);

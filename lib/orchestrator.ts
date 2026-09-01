@@ -17,25 +17,17 @@ import { getLLMProvider, type ConvMessage, type ToolCallRequest } from "./llm";
 import { SYSTEM_PROMPT, TOOLS } from "./claude";
 import { getCatalogByIds, searchCatalog } from "./catalog";
 import { logAudit } from "./audit";
+import { serializeError } from "./errors";
 import { evaluateSpendCap, evaluateRetry, computeCartTotalPaise } from "./guardrails";
 import { createRazorpayPaymentLink } from "./razorpay";
 import type { CartItem, Order, Session } from "./types";
 
 const MAX_TOOL_ITERATIONS = 6; // hard stop so a runaway tool-call loop can't spin forever
 
-/**
- * Razorpay's Node SDK throws plain objects shaped like
- * { statusCode, error: { code, description, source, step, reason } },
- * not real Error instances — err.message on those is undefined, and
- * String(err) produces the useless "[object Object]" (confirmed hitting
- * this in practice — see BUILD_LOG.md). Extracts whatever's actually there
- * instead of guessing one shape.
- */
-function serializeError(err: unknown): Record<string, unknown> {
-  if (err instanceof Error) return { message: err.message, name: err.name };
-  if (typeof err === "object" && err !== null) return err as Record<string, unknown>;
-  return { raw: String(err) };
-}
+// serializeError lives in lib/errors.ts (imported above) so every path that
+// catches a Razorpay failure uses the same one. The agent order route had
+// reimplemented a worse version by hand and logged "[object Object]" for a
+// real failure — the exact bug that helper was written to prevent.
 
 export type AgentTurnResult = {
   reply: string;

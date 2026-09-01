@@ -8,6 +8,7 @@ import { createRazorpayPaymentLink } from "@/lib/razorpay";
 import { checkAgentStanding } from "@/lib/agent-trust";
 import { getMerchant } from "@/lib/merchants";
 import { checkRevocation, recordObservedMandate } from "@/lib/revocation";
+import { serializeError } from "@/lib/errors";
 import type { CartItem, Order, Session } from "@/lib/types";
 
 /**
@@ -383,7 +384,10 @@ export async function POST(req: NextRequest) {
       orderId: order.id,
       actor: "orchestrator",
       action: "razorpay_call_failed",
-      detail: { error: err instanceof Error ? err.message : String(err), channel: "agent_to_agent" },
+      // serializeError, not String(err): Razorpay throws plain objects, and
+      // String() flattens them to "[object Object]" — which is how this
+      // failure first showed up with no diagnosable cause. See lib/errors.ts.
+      detail: { error: serializeError(err), channel: "agent_to_agent" },
     });
     return NextResponse.json(
       { accepted: false, error: "payment_link_failed", message: "Order accepted but the payment link could not be created." },
