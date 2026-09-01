@@ -17,13 +17,17 @@ Lead with this. The guardrails are not a safety feature bolted onto a chatbot; t
 ## Before you start (2 minutes, do it every time)
 
 ```bash
-npx tsx scripts/check-gemini-chain.ts     # all three models healthy?
+npx tsx scripts/check-gemini-chain.ts                 # all three models healthy?
+npx tsx scripts/cleanup-payment-links.ts --dry-run    # how many links left?
 curl -s -o /dev/null -w "%{http_code}\n" https://ordermind-gamma.vercel.app/agent
 ```
 
 - If a model shows **DEAD**, fix the chain before demoing.
 - If **every** model is rate-limited, wait ~60s.
+- **If the link count is near 30, stop.** Razorpay test mode allows 30 payment links per account *ever* — cancelling unpaid ones does not free slots. Past the cap, every successful order fails at the last step. Switch to a fresh test account before you present; a demo plus a couple of dry runs can burn ten.
 - Have `/audit` open in a second tab, already loaded.
+
+**Refusal scenarios cost nothing.** Over-mandate, tampered, replayed, revoked and rate-limited all stop *before* Razorpay is called, so rehearse those freely. Only successful orders consume a link — budget those.
 
 ---
 

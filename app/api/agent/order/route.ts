@@ -8,7 +8,7 @@ import { createRazorpayPaymentLink } from "@/lib/razorpay";
 import { checkAgentStanding } from "@/lib/agent-trust";
 import { getMerchant } from "@/lib/merchants";
 import { checkRevocation, recordObservedMandate } from "@/lib/revocation";
-import { serializeError } from "@/lib/errors";
+import { serializeError, isPaymentLinkQuotaExhausted, PAYMENT_LINK_QUOTA_MESSAGE } from "@/lib/errors";
 import type { CartItem, Order, Session } from "@/lib/types";
 
 /**
@@ -389,8 +389,17 @@ export async function POST(req: NextRequest) {
       // failure first showed up with no diagnosable cause. See lib/errors.ts.
       detail: { error: serializeError(err), channel: "agent_to_agent" },
     });
+    // Name the account-quota case explicitly. It looks like a code fault and
+    // isn't — see lib/errors.ts.
+    const quotaExhausted = isPaymentLinkQuotaExhausted(err);
     return NextResponse.json(
-      { accepted: false, error: "payment_link_failed", message: "Order accepted but the payment link could not be created." },
+      {
+        accepted: false,
+        error: quotaExhausted ? "payment_link_quota_exhausted" : "payment_link_failed",
+        message: quotaExhausted
+          ? PAYMENT_LINK_QUOTA_MESSAGE
+          : "Order accepted but the payment link could not be created.",
+      },
       { status: 502 }
     );
   }

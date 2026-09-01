@@ -19,3 +19,24 @@ export function serializeError(err: unknown): Record<string, unknown> {
   if (typeof err === "object" && err !== null) return err as Record<string, unknown>;
   return { raw: String(err) };
 }
+
+/**
+ * Recognises the one Razorpay failure that looks like a bug but isn't.
+ *
+ * Test mode allows only 30 payment links per account, EVER — cancelling
+ * unpaid ones does not free the slots (verified). Every order this project
+ * places consumes one, so a few days of testing exhausts the account
+ * permanently and every subsequent order fails.
+ *
+ * It deserves its own detection because the generic message ("the payment
+ * link could not be created") sends you hunting for a code fault, when the
+ * actual fix is a fresh test account. Losing minutes to that mid-demo is
+ * exactly the situation worth spending ten lines to avoid.
+ */
+export function isPaymentLinkQuotaExhausted(err: unknown): boolean {
+  const serialised = JSON.stringify(serializeError(err)).toLowerCase();
+  return serialised.includes("limit of 30") || (serialised.includes("rate_limit_exceeded") && serialised.includes("payment_link"));
+}
+
+export const PAYMENT_LINK_QUOTA_MESSAGE =
+  "This Razorpay TEST account has hit its lifetime cap of 30 payment links. This is an account limit, not a fault in the order logic — the order itself was accepted and every guardrail passed. Use a fresh test account (see scripts/cleanup-payment-links.ts, which reports current usage).";
