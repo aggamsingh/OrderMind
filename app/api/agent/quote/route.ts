@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { getCatalogByIds } from "@/lib/catalog";
+import { chooseUpsell } from "@/lib/upsell";
 import { computeCartTotalPaise, evaluateMandate } from "@/lib/guardrails";
 import { verifyMandate } from "@/lib/mandate";
 import { SPEND_CAP_PAISE, type CartItem } from "@/lib/types";
@@ -69,31 +70,23 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // Exactly one upsell, sourced only from pairs_well_with — the same rule the
-  // human chat path follows. Offered, never silently added: the buyer agent
-  // decides whether to include it in the order it actually submits.
-  let upsellOffer: {
-    catalog_id: string;
-    name: string;
-    unit_price_paise: number;
-    reason: string;
-  } | null = null;
-
-  for (const line of lineItems) {
-    const source = catalogMap.get(line.catalog_id);
-    if (!source?.pairs_well_with) continue;
-    const pairMap = await getCatalogByIds(supabase, [source.pairs_well_with]);
-    const pairing = pairMap.get(source.pairs_well_with);
-    if (pairing && pairing.is_available && !lineItems.some((l) => l.catalog_id === pairing.id)) {
-      upsellOffer = {
-        catalog_id: pairing.id,
-        name: pairing.name,
-        unit_price_paise: pairing.price_paise,
-        reason: `Pairs well with ${source.name}`,
-      };
-      break;
-    }
-  }
+  // Exactly one upsell, still constrained to a genuine pairs_well_with
+  // relationship — but which relevant add-on gets offered is now chosen by
+  // measured conversion rather than whichever pairing was found first
+  // (lib/upsell.ts). Offered, never silently added: the buyer agent decides
+  // whether to include it in the order it actually submits.
+  const choice = await chooseUpsell(supabase, lineItems, catalogMap);
+  const upsellOffer = choice
+    ? {
+        catalog_id: choice.item.id,
+        name: choice.item.name,
+        unit_price_paise: choice.item.price_paise,
+        reason: choice.reason,
+        /** Exposed so the buyer can see this is evidence-based, not a nudge. */
+        basis: choice.basis,
+        conversion_rate: choice.stat?.conversion_rate ?? null,
+      }
+    : null;
 
   const subtotalPaise = computeCartTotalPaise(lineItems);
   const totalWithUpsellPaise = subtotalPaise + (upsellOffer?.unit_price_paise ?? 0);

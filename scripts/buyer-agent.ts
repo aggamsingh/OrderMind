@@ -279,7 +279,52 @@ async function placeOrder(
     );
   }
   console.log(`    audit:   ${c.dim(`${MERCHANT}/audit?sessionId=${data.session_id}`)}`);
+
+  await watchSettlement(data.order_id);
   return { accepted: true };
+}
+
+/**
+ * Polls until the order reaches a terminal state, or gives up.
+ *
+ * This exists because "the merchant said yes" is not the same as "I was
+ * charged", and an agent that cannot tell those apart cannot reconcile its own
+ * spending against the mandate it was granted.
+ *
+ * The merchant declares in its manifest that capture happens on a hosted page
+ * (Razorpay S2S is not enabled on a standard test account), so this will sit
+ * at `payment_pending` until someone completes the link. That is the honest
+ * shape of the current rail — the buyer watches rather than assumes, and the
+ * moment settlement happens by any route, it finds out.
+ */
+async function watchSettlement(orderId: string, attempts = 3, intervalMs = 4000) {
+  say("Watching for settlement", `GET /api/agent/order/${orderId.slice(0, 8)}…`);
+
+  for (let i = 1; i <= attempts; i++) {
+    const res = await fetch(`${MERCHANT}/api/agent/order/${orderId}`);
+    if (!res.ok) {
+      console.log(`    ${c.yellow(`status check failed (HTTP ${res.status})`)}`);
+      return;
+    }
+    const status = (await res.json()) as { status: string; terminal: boolean };
+
+    if (status.terminal) {
+      const good = status.status === "paid";
+      console.log(`    ${good ? c.green(`settled: ${status.status}`) : c.red(`settled: ${status.status}`)}`);
+      return;
+    }
+
+    console.log(`    ${c.dim(`attempt ${i}/${attempts}: ${status.status} — not settled yet`)}`);
+    if (i < attempts) await new Promise((r) => setTimeout(r, intervalMs));
+  }
+
+  console.log(
+    c.dim(
+      "    Still awaiting capture. The merchant's manifest declares capture as\n" +
+        "    'hosted_redirect' — a human completes the payment link, and this agent\n" +
+        "    would learn of it on the next poll. Nothing is assumed either way."
+    )
+  );
 }
 
 /**

@@ -5,6 +5,7 @@ import { logAudit } from "@/lib/audit";
 import { computeCartTotalPaise, evaluateMandate } from "@/lib/guardrails";
 import { verifyMandate, mandateForAudit, signReceipt } from "@/lib/mandate";
 import { createRazorpayPaymentLink } from "@/lib/razorpay";
+import { checkAgentStanding } from "@/lib/agent-trust";
 import type { CartItem, Order, Session } from "@/lib/types";
 
 /**
@@ -74,6 +75,37 @@ export async function POST(req: NextRequest) {
   }
 
   const mandate = verification.mandate;
+
+  // ---- 1b. Standing: is this buyer behaving well enough to keep serving? ----
+  // Checked after the signature (so an unauthenticated caller cannot consume
+  // another agent's budget by claiming its id) but before any Razorpay or
+  // order work, since the whole point is to stop a runaway loop cheaply.
+  const standing = await checkAgentStanding(supabase, mandate.buyer_agent_id, mandate.principal);
+  if (!standing.allowed) {
+    const session = await createAgentSession(supabase, mandate.buyer_agent_id);
+    await logAudit({
+      sessionId: session.id,
+      actor: "orchestrator",
+      action: "agent_order_refused",
+      detail: {
+        outcome: standing.code,
+        reason: standing.reason,
+        recent_requests: standing.recentRequests,
+        recent_refusals: standing.recentRefusals,
+        ...mandateForAudit(mandate),
+      },
+    });
+    return NextResponse.json(
+      {
+        accepted: false,
+        error: standing.code,
+        message: standing.reason,
+        retry_after_seconds: standing.retryAfterSeconds,
+        remedy: "Stop retrying, correct the problem the earlier refusals described, then try again.",
+      },
+      { status: 429, headers: { "Retry-After": String(standing.retryAfterSeconds) } }
+    );
+  }
 
   // ---- 2. Single-use: a mandate nonce may not be replayed ----
   const { data: priorUse } = await supabase
