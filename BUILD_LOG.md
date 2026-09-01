@@ -455,3 +455,27 @@ This is the first time this project has proven the complete real-world path: Raz
 **Files touched:** `.gitignore` (`.env.example` negation + dedupe). Everything else was version-control work, not code changes.
 
 **Still open:** backup demo video and README/PRD/pitch-deck finalization are the last two Day 6 items. Note that pushing to `main` now auto-deploys to production — worth knowing before any further commits, since a broken push goes live.
+
+---
+
+## [Day 7] — 2026-09-01 (closing the gaps a judge would find, and turning one merchant into a market)
+
+**Worked on:** An honest gap-hunt against the Track 1 brief, then fixing everything found, in order of how badly it undercut a claim already being made.
+
+**Gap 1 — "end to end" had a human-shaped hole.** The buyer agent received a payment *link* that a person then had to click. Investigated properly rather than assuming: called Razorpay's two server-to-server payment APIs (`payments.createPaymentJson`, `payments.createUpi`) directly against this test account. Both return `"The requested URL was not found on the server"` — S2S is gated behind merchant approval and is not obtainable in a hackathon window. **Resolution:** stop implying otherwise. The manifest now declares exactly how far autonomy reaches (`negotiation: autonomous`, `authorization: autonomous`, `capture: hosted_redirect`) and names the blocker, so a buyer agent can decide before committing rather than discovering the gap afterwards. Disclosing a limit beats being caught by it.
+
+**Gap 2 — the buyer never learned whether it got paid.** The human path had the webhook→conversation bridge (D-6); the machine path had nothing, so an autonomous buyer could not reconcile its own spending against its mandate. Added `GET /api/agent/order/{id}`: signed, pollable status with the reasoning behind it, and a `watchSettlement()` step in the buyer agent that polls rather than assumes.
+
+**Gap 3 — the centrepiece was untested.** `test-guardrails.ts` covered the spend cap and retry logic but had **zero** coverage of `verifyMandate` or `evaluateMandate` — the only code standing between a forged mandate and a real charge. Added `scripts/test-mandates.ts`: 21 assertions covering signature verification, an inflated-ceiling forgery, garbage and empty tokens, hostile input that must not throw, expiry, negative amounts, stricter-of enforcement in both directions, inclusive boundaries, and receipt tampering. All pass.
+
+**Gap 4 — the upsell couldn't learn.** It read one hardcoded `pairs_well_with` column, so it could never improve and couldn't say which pairings carried the revenue. `lib/upsell.ts` now ranks candidates by measured conversion, counting an upsell as converted only if it survived into the order that was actually created — suggesting something is not the same as selling it. Candidates under a minimum sample size are explored rather than ranked, so thin data doesn't freeze the merchant onto whichever pairing happened to convert first. Suggestions stay constrained to genuine pairings: learning changes *which* relevant add-on is offered, never whether it's relevant.
+
+**Gap 5 — nothing defended the merchant from a bad agent.** Mandates say how much a buyer may spend, not whether it should still be served. A human who is refused stops; a buggy retry loop does not, and every attempt costs a Razorpay call and a DB write. `lib/agent-trust.ts` derives standing from behaviour in `audit_log` (not in-process counters, which reset on every serverless cold start) and tracks the signing principal as well as the agent id, so churning agent ids doesn't reset the clock. Limits are published in the manifest so a well-behaved agent can pace itself.
+
+**Gap 6 — one merchant is not a market.** The brief says merchants, plural. Added a second storefront with its own manifest, own range, and a deliberately tighter autonomous cap (₹300 vs ₹500) — the differing cap is the lesson, since a buyer that assumed one merchant's limits generalise gets refused. `evaluateMandate` now takes the merchant's cap, defaulting to the old constant so every existing caller is untouched. `/api/agent/merchants` is the directory, linking to each manifest rather than restating terms that could drift. **Verified live:** the buyer agent discovered both merchants, priced the same goal at each (₹70 vs ₹60), discarded non-viable ones, and bought from the cheaper — a genuine comparison purchase.
+
+**Also:** rewrote `06_DEMO_SCRIPT.md` around the agent story rather than the chatbot, with the refusal as the centrepiece, a pre-flight checklist, and an "honesty notes" section that volunteers the three real limitations before a judge finds them.
+
+**Files touched:** `lib/mandate.ts`, `lib/guardrails.ts` (merchant-aware cap), `lib/upsell.ts` (new), `lib/agent-trust.ts` (new), `lib/merchants.ts` (new), `app/.well-known/agent-commerce.json` (autonomy + rate limits + directory + per-merchant terms), `app/api/agent/{catalog,quote,order}` (merchant-scoped), `app/api/agent/order/[orderId]` (new), `app/api/agent/merchants` (new), `scripts/test-mandates.ts` (new), `scripts/check-gemini-chain.ts`, `scripts/buyer-agent.ts` (settlement watch + comparison shopping), `06_DEMO_SCRIPT.md`, `02_ARCHITECTURE.md`, `DECISIONS.md` D-8/D-9.
+
+**Still open:** the backup demo video and the pitch deck (`07_PITCH_DECK_OUTLINE.md`) are the last two items. `04_AUDIT_TRAIL_SAMPLE.md` predates the agent channel and should gain an agent-to-agent scenario — its four existing scenarios are all human-path.

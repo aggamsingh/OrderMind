@@ -1,38 +1,95 @@
-# 06 — Demo Script (target: under 5 minutes)
+# 06 — Demo Script
 
-Rehearse this exactly per `CLAUDE.md` §6/Day 7. Timer starts when you start talking.
+**Target: under 5 minutes** (the buildathon's stated pitch-video limit).
 
-**Verified against the official Razorpay AI Buildathon page (razorpay.com/buildathon/, checked 2026-08-30):** submissions require a public repo, a **5-minute pitch video**, and architecture documentation (`02_ARCHITECTURE.md` covers that). This script doubles as the pitch video script — it's the actual submission deliverable, not just an internal rehearsal. Confirmed no restriction on using a third-party LLM API (Claude is fine) and no requirement to build a custom model.
+Live: **https://ordermind-gamma.vercel.app**
 
-## 0. One-line framing (15s)
-"OrderMind is a checkout agent for a café — but the point isn't the chatbot, it's that every money action is explainable, bounded, and gated, with a full audit trail. I'll show four things: reasoning, a hard spend gate chat can't talk its way past, a real payment failure handled gracefully, and one real bug this build process caught before it shipped."
+---
 
-## 1. Happy path — reasoning + one upsell (45s)
-- Type: "I want something warm, not too sweet"
-- Point out: cart item appears with its stated reason, exactly one upsell suggested from `pairs_well_with`
-- Say "yes" → order auto-completes (under ₹500) → show it hit Razorpay test mode, payment captured
-- Switch to `/audit` tab, point at the row-by-row trail for what just happened
+## The one-line thesis
 
-## 2. The gate — the core judging criterion (70s)
-- Start a new session, order enough to exceed ₹500
-- Say "yes pay now" in chat *twice* — show nothing happens, no Razorpay call fires
-- Point at `/audit`: `cap_check_blocked` rows exist for both attempts — the block itself was logged, not silently ignored
-- Click the actual `ConfirmationGate.tsx` "Confirm ₹X" button
-- Show the order now proceeds — narrate: "the gate isn't a prompt instruction, it's server-side code in guardrails.ts that re-checks the total independent of anything the model said"
+> Everyone is building agents that *buy*. Nobody is building the merchant that can safely *sell* to them. When an AI buyer meets an AI seller, neither can trust the other — and OrderMind is the side that verifies.
 
-## 3. Failure handling (60s)
-- Trigger the scripted decline (known test-mode decline credential)
-- Show the agent's plain-language explanation to the customer
-- Accept the retry → show it succeeds
-- (If time allows / if judges ask) explain: a second retry attempt is hard-blocked server-side — point at `retry_blocked_max_reached` in the sample audit trail if not re-triggering live
+Lead with this. The guardrails are not a safety feature bolted onto a chatbot; they are the product.
 
-## 4. One real problem, shown honestly (45s)
-Submissions are explicitly judged partly on "what broke and how you solved it" — don't skip this, it's graded, not filler.
-- Pick the strongest single story from `BUILD_LOG.md` — the RLS gap is the sharpest one: "Applying our own schema, Supabase's own linter flagged that our tables had no Row Level Security — meaning the public anon key could've bypassed our entire guardrail system and hit the database directly. We caught it before launch, enabled RLS with zero anon policies, and verified with a script that the anon key genuinely gets zero rows back."
-- This one lands well because it's the same "bounded and gated" story, one layer deeper — not just app logic, but the database itself.
+---
 
-## 5. Close (25s)
-"Everything you just saw — the reasoning, the block, the confirm, the retry — is one row each in a real Postgres audit_log, not a claim in a pitch deck. That's what 'explainable, bounded, gated' means in code."
+## Before you start (2 minutes, do it every time)
 
-## Fallback
-If live demo breaks: cut immediately to the backup demo video (recorded Day 6) and narrate over it. Do not attempt to debug live in front of judges.
+```bash
+npx tsx scripts/check-gemini-chain.ts     # all three models healthy?
+curl -s -o /dev/null -w "%{http_code}\n" https://ordermind-gamma.vercel.app/agent
+```
+
+- If a model shows **DEAD**, fix the chain before demoing.
+- If **every** model is rate-limited, wait ~60s.
+- Have `/audit` open in a second tab, already loaded.
+
+---
+
+## Act 1 — A machine buys from a machine (~110s) ← *lead with this*
+
+Open **`/agent`**. Don't explain the architecture first; run it and narrate.
+
+1. Leave the scenario on **Successful order**. Click **Run agent-to-agent transaction**.
+2. Narrate as the stream lands:
+   - *"This buyer isn't a person. It found this merchant from one well-known URL — no browser, no chat window."*
+   - *"It read the catalog as data and decided what to buy from a plain-language goal."*
+   - **When the upsell appears:** *"Watch this — the merchant just upsold a machine. And the buyer accepted, but only after checking the extra item still fit inside the budget its human authorised."*
+   - *"It presents a signed mandate: how much its human allowed, for what, until when, once only."*
+3. Land the point: **real Razorpay payment link, and a signed receipt the buyer verified** rather than taking the merchant's word.
+
+## Act 2 — The refusal (~80s) ← *the moment they remember*
+
+Same page. Switch to **Over-mandate**. Run it.
+
+> *"Now the buyer tries to spend more than its human authorised. Any merchant that just takes the money is exactly the merchant you should never let an agent loose on."*
+
+Point at the red card: **refused, 402, nothing charged, reason logged.**
+
+If you have time, hit **Tampered mandate** — the buyer rewrites its own spending ceiling to ₹99,999 and the signature check kills it. That is the one that gets an audible reaction.
+
+> *"A human who gets refused reads the message and stops. Software doesn't. So repeated refusals put a buyer into cool-down — a merchant open to agents needs an answer to a retry loop."*
+
+## Act 3 — The audit trail (~60s)
+
+Click **Inspect the audit trail** from the outcome card.
+
+- *"Every decision, colour-coded by outcome. Green allowed, amber gated, red refused."*
+- Hit **Show refusals only**. *"This is the part that matters. Most systems log what worked. The refusals are the evidence the limits are real."*
+- Expand one row: *"Plain language on top, the raw signed record underneath. Nothing hidden."*
+- Point out the **buyer agent** actor chip: *"The trail knows the customer was a program, not a person."*
+
+## Act 4 — It's a market, and it makes money (~50s)
+
+Terminal:
+
+```bash
+npx tsx scripts/buyer-agent.ts --scenario compare --goal "something sweet to finish a meal" --budget 20000
+```
+
+> *"Two merchants, each with its own manifest and its own limits. The agent prices the same goal at both, throws out the one that would refuse it, and buys from the cheaper. That's a market, not a storefront."*
+
+Then back to the home page, point at the metrics strip:
+
+> *"65% of orders take the agent's suggestion. Average basket up 41%. And the refusals sit right next to the revenue — growth you got by ignoring your own limits isn't a result worth showing."*
+
+## Close (~20s)
+
+> *"Every money action is explainable, bounded, and gated — on both sides. The merchant checks the buyer. The buyer checks the merchant. And whichever way it goes, there's a receipt."*
+
+---
+
+## Honesty notes — say these before a judge finds them
+
+Volunteering these reads as confidence. Being caught by them does the opposite.
+
+- **Capture isn't autonomous.** The agent does discovery, negotiation, mandate, order and receipt with no human — settlement happens on Razorpay's hosted page. Razorpay's S2S payment APIs are gated behind merchant approval; both were called against this account and returned "not found". **The manifest declares this** (`payments.autonomy.capture: "hosted_redirect"`), so a buyer knows before it commits.
+- **Two merchants share one deployment**, one catalog table, and one test Razorpay account. Production would be separate hosts and accounts. The manifests, caps, ranges and the buyer treating them as independent counterparties are genuinely separate.
+- **Free-tier LLM.** Gemini allows 15 req/min per model, so the provider rotates a verified 3-model chain on quota exhaustion. Measured under 9 concurrent turns: 7 of 9 still completed.
+
+## If it breaks live
+
+- **Agent page stalls** → the SSE stream fell over. Reload and re-run; scenarios are idempotent.
+- **"Trouble reaching the assistant"** → all three models are rate-limited. Wait 60s, or run the terminal buyer agent instead, which is more resilient.
+- **Total failure** → play the backup video, then show `/audit` live. The audit trail is real data and carries the argument on its own.
