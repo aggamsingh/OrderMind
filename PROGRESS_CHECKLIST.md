@@ -38,7 +38,23 @@ Check off as completed. If a day's work slips, note why in `BUILD_LOG.md` rather
 - [x] Real Razorpay-delivered webhook proven end-to-end (not just simulated payloads) — first via a temporary cloudflared tunnel, then confirmed again against the permanent Vercel URL once deployed (see above). Found and fixed the most serious bug in the project doing this: every real payment was silently failing to update `orders`/`audit_log` at all, because Payment Links auto-generate their own disconnected order that this app was never matching against. See DECISIONS.md D-7.
 - [x] `04_AUDIT_TRAIL_SAMPLE.md` replaced with a real export — 4 real scenarios (happy path, over-cap gate, decline+retry+success, retry blocked) pulled directly from live `audit_log`; categories 1 and 3 are genuine Razorpay-delivered webhooks, not simulated
 - [ ] Backup demo video recorded
-- [ ] `README.md`, PRD, pitch deck content finalized
+- [x] `README.md`, PRD, pitch deck content finalized — README rewritten around the trust story with a "known limits" section; `07_PITCH_DECK_OUTLINE.md` rebuilt (refusal is the memorable slide, limitations framed as a strengths slide); `08_AGENT_PROTOCOL.md` added as a real spec; `06_DEMO_SCRIPT.md` rewritten with a pre-flight checklist; `04_AUDIT_TRAIL_SAMPLE.md` extended with real agent-to-agent accepted/refused trails
+
+## Beyond the original plan — agent-to-agent commerce (2026-08-31 / 09-01)
+Added after an honest re-read of the Track 1 brief showed the project was answering the wrong half of it (see `DECISIONS.md` D-8).
+- [x] Merchant discovery manifest (`/.well-known/agent-commerce.json`), per-merchant terms
+- [x] Signed spend mandates — ceiling, purpose, expiry, single-use nonce; verified server-side
+- [x] Stricter-of enforcement (buyer mandate vs merchant cap), `evaluateMandate()`
+- [x] Four refusal paths verified live: over-mandate (402), tampered signature (403), replayed nonce (409), runaway loop cool-down (429)
+- [x] Signed receipts the buyer verifies, and `GET /api/agent/order/{id}` so it learns the outcome
+- [x] Two merchants with differing caps + `/api/agent/merchants` directory; comparison shopping verified live
+- [x] Basket splitting across merchants, one mandate per leg, all inside one approved budget — verified live
+- [x] **Mandate revocation** — per-mandate and a principal kill switch (`lib/revocation.ts`); closes a real hole, since a mandate was previously a bearer token that could never be withdrawn
+- [x] `/principal` console — grant authority, watch spend against it, revoke it
+- [x] Agent-initiated refunds, gated exactly like charges (`evaluateRefund()`)
+- [x] Learned upsell — ranks pairings by measured conversion, explores unproven ones
+- [x] 28 unit assertions on mandates, forgery, and refunds (`scripts/test-mandates.ts`)
+- [ ] **Verify revocation + refunds live** — blocked on `supabase/migrations/002_*.sql` being applied, and on a fresh Razorpay account (D-10: this one has hit the 30 payment-link lifetime cap)
 
 ## Day 7 — Dry run + buffer
 - [ ] Full run-through with judge-style Q&A rehearsal

@@ -84,9 +84,37 @@ No further Razorpay call was made after the block — confirmed by `retry_count`
 
 ---
 
+## 5. Agent-to-agent — an autonomous buyer, accepted
+
+**Session:** `4c90bbdd-0f01-4a24-a2b6-8d414b5060b1` · One leg of a **split basket**: the buyer wanted "a hot chai and something sweet to finish", no single merchant stocked both, so it drew a separate mandate per merchant. This is the Chai Point Express leg. No human anywhere in this flow.
+
+| actor | action | detail | created_at |
+|---|---|---|---|
+| **buyer_agent** | agent_session_created | `{"channel":"agent_to_agent","buyer_agent_id":"buyer-agent://demo-procurement-bot/v1"}` | 15:46:02.007 |
+| **buyer_agent** | agent_order_requested | `{"nonce":"074a420c…","purpose":"a hot chai and something sweet to finish (split: Chai Point Express)","principal":"aggam@example.com"}` | 15:46:02.308 |
+| orchestrator | **mandate_accepted** | `{"reason":"Order total ₹70.00 is within both the buyer's mandate (₹70.00) and this merchant's autonomous cap (₹500.00). Binding limit: the buyer's mandate at ₹70.00."}` | 15:46:03.611 |
+| orchestrator | create_order | `{"channel":"agent_to_agent","total_paise":7000,"razorpay_payment_link_id":"plink_TWpKa56AlF5KO4"}` | 15:46:05.479 |
+
+Note the **binding limit** is named explicitly: the buyer's own mandate (₹70.00) was tighter than the merchant's ₹500 cap, so the buyer's limit bound. The mandate was capped at exactly this leg's subtotal — splitting a purchase must never become a way to spend more than the principal approved.
+
+## 6. Agent-to-agent — an autonomous buyer, refused
+
+**Session:** `47a218c2-8806-4d37-8e69-d55556c23494` · The buyer presented a mandate for less than its own basket cost. The signature was valid and unexpired; it was refused on the amount.
+
+| actor | action | detail | created_at |
+|---|---|---|---|
+| **buyer_agent** | agent_session_created | `{"channel":"agent_to_agent","buyer_agent_id":"buyer-agent://demo-procurement-bot/v1"}` | 14:16:00.209 |
+| **buyer_agent** | agent_order_requested | `{"nonce":"6e20abd5…","purpose":"a warm afternoon pick-me-up, nothing too sweet","principal":"aggam@example.com"}` | 14:16:00.454 |
+| orchestrator | **agent_order_refused** | `{"reason":"Order total ₹65.00 exceeds the buyer agent's own spend mandate of ₹32.50. Refused — the buyer's principal did not delegate authority for this amount, and no human is present to raise it."}` | 14:16:01.179 |
+
+No Razorpay call was made. The refusal, its reason, and the mandate it was refused against are all preserved — a merchant that silently dropped this would leave the buyer's principal with no way to discover what their agent attempted.
+
+Other refusal codes captured the same way during testing: `bad_signature` (a buyer that rewrote its own ceiling), `replayed_nonce` (a mandate spent twice), `mandate_revoked` (the principal withdrew authority), and `cooling_down` (a runaway retry loop, refused after four attempts in a minute).
+
 ## Provenance
 
 - Categories 1 and 3 are genuine Razorpay Test-Mode payments, delivered via a real webhook registered in the Razorpay Dashboard, received through a temporary `cloudflared` tunnel to the local dev server. See `DECISIONS.md` D-7 for the (serious) bug this surfaced and fixed on the same day.
 - Category 2 is from `BUILD_LOG.md`'s Day 3 log (2026-08-30), predating the real webhook setup — it stops at `create_order` since no webhook is involved in the gating story itself.
 - Category 4's webhook deliveries are signed simulations (`scripts/test-failure-flow-live.ts`), noted explicitly above; everything after signature verification is the real, unmodified handler code.
+- Categories 5 and 6 are real autonomous-buyer sessions driven by `scripts/buyer-agent.ts`, which reaches the merchant only over public HTTP. They are logged under the distinct `buyer_agent` actor — when the customer is a program, the trail says so.
 - This file replaces the illustrative placeholder that previously lived here (see git history / `BUILD_LOG.md` for the original), per `CLAUDE.md` §8.
