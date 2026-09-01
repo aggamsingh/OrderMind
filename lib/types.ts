@@ -46,7 +46,9 @@ export type OrderStatus =
   | "paid"
   | "failed"
   | "retried"
-  | "retry_failed";
+  | "retry_failed"
+  // Reversed after capture — see evaluateRefund() in lib/guardrails.ts.
+  | "refunded";
 
 export type Order = {
   id: string;

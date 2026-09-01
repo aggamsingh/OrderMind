@@ -7,6 +7,7 @@ import { verifyMandate, mandateForAudit, signReceipt } from "@/lib/mandate";
 import { createRazorpayPaymentLink } from "@/lib/razorpay";
 import { checkAgentStanding } from "@/lib/agent-trust";
 import { getMerchant } from "@/lib/merchants";
+import { checkRevocation, recordObservedMandate } from "@/lib/revocation";
 import type { CartItem, Order, Session } from "@/lib/types";
 
 /**
@@ -77,6 +78,43 @@ export async function POST(req: NextRequest) {
   }
 
   const mandate = verification.mandate;
+
+  // ---- 1a. Does the principal still stand behind this mandate? ----
+  // A valid signature proves the mandate WAS issued; it says nothing about
+  // whether the human who issued it has since changed their mind. Checked
+  // after the signature so an unauthenticated caller cannot probe another
+  // principal's revocation state by guessing identifiers.
+  const revocation = await checkRevocation(supabase, mandate);
+  if (revocation.revoked) {
+    const session = await createAgentSession(supabase, mandate.buyer_agent_id);
+    await logAudit({
+      sessionId: session.id,
+      actor: "buyer_agent",
+      action: "mandate_rejected",
+      detail: {
+        code: "mandate_revoked",
+        scope: revocation.scope,
+        revoked_at: revocation.revokedAt,
+        reason: revocation.reason,
+        ...mandateForAudit(mandate),
+      },
+    });
+    return NextResponse.json(
+      {
+        accepted: false,
+        error: "mandate_revoked",
+        message: revocation.reason,
+        revoked_at: revocation.revokedAt,
+        scope: revocation.scope,
+        remedy: "Ask your principal for a new mandate. This one is no longer honoured.",
+      },
+      { status: 403 }
+    );
+  }
+
+  // Bookkeeping so this mandate becomes individually revocable from the
+  // principal console, even though it was minted outside it.
+  await recordObservedMandate(supabase, mandate);
 
   // ---- 1b. Standing: is this buyer behaving well enough to keep serving? ----
   // Checked after the signature (so an unauthenticated caller cannot consume

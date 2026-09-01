@@ -21,8 +21,8 @@ config({ path: ".env.local", quiet: true });
 process.env.MANDATE_SIGNING_SECRET ||= "test-only-signing-secret-not-a-real-key";
 
 import { issueMandate, verifyMandate, signReceipt, verifyReceipt } from "../lib/mandate";
-import { evaluateMandate } from "../lib/guardrails";
-import { SPEND_CAP_PAISE } from "../lib/types";
+import { evaluateMandate, evaluateRefund } from "../lib/guardrails";
+import { SPEND_CAP_PAISE, type Order } from "../lib/types";
 
 let passed = 0;
 let failed = 0;
@@ -153,6 +153,70 @@ console.log("--- evaluateMandate: the stricter limit binds ---");
     "an enormous mandate still cannot exceed the merchant cap",
     d.outcome === "blocked_exceeds_merchant_cap",
     d
+  );
+}
+
+console.log("--- evaluateRefund: reversals are gated like any other money movement ---");
+{
+  const base = {
+    id: "order-1",
+    session_id: "s1",
+    razorpay_order_id: "order_x",
+    razorpay_payment_link_id: "plink_x",
+    total_paise: 10000,
+    retry_count: 0,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  const paid = { ...base, status: "paid" } as Order;
+  const pending = { ...base, status: "payment_pending" } as Order;
+
+  check(
+    "a paid order can be refunded in full",
+    evaluateRefund(paid, false, null).outcome === "refund_allowed"
+  );
+  check(
+    "refunding null means the whole amount",
+    (() => {
+      const d = evaluateRefund(paid, false, null);
+      return d.outcome === "refund_allowed" && d.amountPaise === 10000;
+    })()
+  );
+  check(
+    "an unpaid order cannot be refunded",
+    (() => {
+      const d = evaluateRefund(pending, false, null);
+      return d.outcome === "refund_blocked" && d.code === "order_not_paid";
+    })()
+  );
+  check(
+    "a second refund is refused",
+    (() => {
+      const d = evaluateRefund(paid, true, null);
+      return d.outcome === "refund_blocked" && d.code === "already_refunded";
+    })()
+  );
+  check(
+    "refunding more than was paid is refused",
+    (() => {
+      const d = evaluateRefund(paid, false, 20000);
+      return d.outcome === "refund_blocked" && d.code === "amount_exceeds_payment";
+    })()
+  );
+  check(
+    "a partial refund within the amount paid is allowed",
+    (() => {
+      const d = evaluateRefund(paid, false, 4000);
+      return d.outcome === "refund_allowed" && d.amountPaise === 4000;
+    })()
+  );
+  check(
+    "a negative refund amount is refused",
+    (() => {
+      const d = evaluateRefund(paid, false, -500);
+      return d.outcome === "refund_blocked" && d.code === "invalid_amount";
+    })()
   );
 }
 

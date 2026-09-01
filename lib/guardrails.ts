@@ -103,6 +103,82 @@ export function evaluateRetry(order: Order): RetryDecision {
   };
 }
 
+export type RefundDecision =
+  | { outcome: "refund_allowed"; amountPaise: number; reason: string }
+  | { outcome: "refund_blocked"; code: RefundBlockCode; reason: string };
+
+export type RefundBlockCode =
+  | "order_not_paid"
+  | "already_refunded"
+  | "amount_exceeds_payment"
+  | "invalid_amount";
+
+/**
+ * Gates a refund the same way every other money movement here is gated.
+ *
+ * A refund moves real money, just outwards — so it gets the same treatment as
+ * a charge rather than being waved through as "the safe direction". An agent
+ * that can refund without bounds can drain a merchant just as effectively as
+ * one that can charge without bounds, and a buggy loop does not care which
+ * way the money flows.
+ *
+ * Rules, all re-derived from DB state rather than anything a caller claims:
+ *  - only a genuinely paid order can be refunded
+ *  - exactly one refund per order, mirroring the single-retry rule
+ *  - never more than was actually paid
+ */
+export function evaluateRefund(
+  order: Order,
+  alreadyRefunded: boolean,
+  requestedPaise: number | null
+): RefundDecision {
+  const rupees = (paise: number) => `₹${(paise / 100).toFixed(2)}`;
+
+  if (order.status !== "paid") {
+    return {
+      outcome: "refund_blocked",
+      code: "order_not_paid",
+      reason: `Order is ${order.status}, not paid. There is nothing to refund — a payment that never captured cannot be reversed.`,
+    };
+  }
+
+  if (alreadyRefunded) {
+    return {
+      outcome: "refund_blocked",
+      code: "already_refunded",
+      reason: "This order has already been refunded. Exactly one refund is permitted per order.",
+    };
+  }
+
+  // Null means "refund it all", which is the common case for an agent
+  // reversing its own mistake.
+  const amountPaise = requestedPaise ?? order.total_paise;
+
+  if (!Number.isInteger(amountPaise) || amountPaise <= 0) {
+    return {
+      outcome: "refund_blocked",
+      code: "invalid_amount",
+      reason: "Refund amount must be a positive whole number of paise.",
+    };
+  }
+
+  if (amountPaise > order.total_paise) {
+    return {
+      outcome: "refund_blocked",
+      code: "amount_exceeds_payment",
+      reason: `Requested refund of ${rupees(amountPaise)} exceeds the ${rupees(
+        order.total_paise
+      )} actually paid for this order.`,
+    };
+  }
+
+  return {
+    outcome: "refund_allowed",
+    amountPaise,
+    reason: `Refunding ${rupees(amountPaise)} of the ${rupees(order.total_paise)} paid.`,
+  };
+}
+
 export type MandateDecision =
   | {
       outcome: "mandate_satisfied";

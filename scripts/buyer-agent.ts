@@ -23,6 +23,8 @@
  *   npx tsx scripts/buyer-agent.ts --scenario over-mandate   # refusal demo
  *   npx tsx scripts/buyer-agent.ts --scenario replay         # single-use demo
  *   npx tsx scripts/buyer-agent.ts --scenario tampered       # signature demo
+ *   npx tsx scripts/buyer-agent.ts --scenario revoked        # principal pulls authority
+ *   npx tsx scripts/buyer-agent.ts --scenario compare        # shop across merchants
  *   npx tsx scripts/buyer-agent.ts --merchant https://ordermind-gamma.vercel.app
  */
 import { config } from "dotenv";
@@ -233,8 +235,86 @@ async function compareAndBuy() {
   await watchSettlement(data.order_id, 2, 3000);
 }
 
+/**
+ * The principal changes their mind mid-flight.
+ *
+ * A signed mandate is a bearer token, so the interesting question is not "can
+ * the agent spend?" but "can the human stop it?". Here the agent obtains a
+ * perfectly valid mandate, the principal revokes it, and the agent — holding
+ * a token whose signature still verifies — is refused anyway.
+ */
+async function revokedRun() {
+  console.log(c.bold("\n══════ AUTONOMOUS BUYER AGENT — REVOKED MID-FLIGHT ══════"));
+
+  say("Principal grants authority", "POST /api/principal/mandates");
+  const grantRes = await fetch(`${MERCHANT}/api/principal/mandates`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      principal: PRINCIPAL,
+      buyer_agent_id: BUYER_AGENT_ID,
+      max_amount_paise: BUDGET_PAISE,
+      purpose: GOAL,
+    }),
+  });
+  const grant = await grantRes.json();
+  if (!grantRes.ok) {
+    console.error(c.red(`    could not grant: ${grant.message ?? grantRes.status}`));
+    return;
+  }
+  console.log(`    granted ${rupees(BUDGET_PAISE)}, nonce ${c.dim(grant.mandate.nonce.slice(0, 18))}…`);
+
+  const catalog = (await (await fetch(`${MERCHANT}/api/agent/catalog`)).json()) as {
+    items: CatalogItem[];
+  };
+  const chosen = await decideItems(catalog.items);
+
+  say("Principal changes their mind", "POST /api/principal/revoke");
+  const revokeRes = await fetch(`${MERCHANT}/api/principal/revoke`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      scope: "mandate",
+      nonce: grant.mandate.nonce,
+      reason: "Changed my mind — cancelled from the principal console.",
+    }),
+  });
+  console.log(
+    revokeRes.ok
+      ? `    ${c.yellow("mandate revoked")} ${c.dim("(the token itself is unchanged and still verifies)")}`
+      : c.red(`    revoke failed: ${revokeRes.status}`)
+  );
+
+  say("Agent tries to spend it anyway", "POST /api/agent/order");
+  const res = await fetch(`${MERCHANT}/api/agent/order`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Agent-Mandate": grant.token },
+    body: JSON.stringify({
+      items: chosen.map((i) => ({ catalog_id: i.catalog_id, qty: i.qty })),
+      buyer_note: `Autonomous purchase for: ${GOAL}`,
+    }),
+  });
+  const data = await res.json();
+
+  if (res.ok && data.accepted) {
+    console.log(c.red(`    ACCEPTED — this is a BUG, a revoked mandate must never be honoured.`));
+    return;
+  }
+
+  console.log(`    ${c.red("REFUSED")} (HTTP ${res.status}) — ${c.bold(data.error)}`);
+  console.log(`    ${data.message}`);
+  console.log(
+    c.dim(
+      "\n    The signature still verifies and the mandate has not expired. It was\n" +
+        "    refused because the human who granted it took the authority back —\n" +
+        "    which is what makes this delegation rather than a giveaway."
+    )
+  );
+}
+
 async function main() {
   if (SCENARIO === "compare") return compareAndBuy();
+  if (SCENARIO === "revoked") return revokedRun();
 
   console.log(c.bold("\n══════ AUTONOMOUS BUYER AGENT ══════"));
   console.log(`${c.dim("agent   ")} ${BUYER_AGENT_ID}`);

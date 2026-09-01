@@ -31,7 +31,7 @@ create table if not exists orders (
   razorpay_payment_link_id text,
   total_paise integer not null check (total_paise >= 0),
   status text not null default 'created'
-    check (status in ('created', 'payment_pending', 'paid', 'failed', 'retried', 'retry_failed')),
+    check (status in ('created', 'payment_pending', 'paid', 'failed', 'retried', 'retry_failed', 'refunded')),
   retry_count integer not null default 0 check (retry_count >= 0 and retry_count <= 1),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()

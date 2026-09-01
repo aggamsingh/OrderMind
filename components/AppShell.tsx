@@ -9,6 +9,7 @@ import type { ReactNode } from "react";
 const NAV = [
   { href: "/", label: "Chat", hint: "Human customer" },
   { href: "/agent", label: "Agent-to-agent", hint: "Machine customer" },
+  { href: "/principal", label: "Principal", hint: "Grant & revoke authority" },
   { href: "/audit", label: "Audit trail", hint: "Every decision" },
 ];
 
