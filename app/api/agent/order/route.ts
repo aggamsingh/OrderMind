@@ -6,6 +6,7 @@ import { computeCartTotalPaise, evaluateMandate } from "@/lib/guardrails";
 import { verifyMandate, mandateForAudit, signReceipt } from "@/lib/mandate";
 import { createRazorpayPaymentLink } from "@/lib/razorpay";
 import { checkAgentStanding } from "@/lib/agent-trust";
+import { getMerchant } from "@/lib/merchants";
 import type { CartItem, Order, Session } from "@/lib/types";
 
 /**
@@ -43,6 +44,7 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = getSupabaseAdmin();
+  const merchant = getMerchant(req.nextUrl.searchParams.get("merchant"));
 
   // ---- 1. Mandate must exist and verify, before anything else happens ----
   const mandateHeader = req.headers.get("x-agent-mandate");
@@ -208,7 +210,7 @@ export async function POST(req: NextRequest) {
   const totalPaise = computeCartTotalPaise(cart);
 
   // ---- 4. The dual gate: stricter of buyer mandate and merchant cap ----
-  const decision = evaluateMandate(totalPaise, mandate.max_amount_paise);
+  const decision = evaluateMandate(totalPaise, mandate.max_amount_paise, merchant.autonomousCapPaise);
 
   if (decision.outcome !== "mandate_satisfied") {
     await logAudit({
@@ -280,7 +282,7 @@ export async function POST(req: NextRequest) {
     const paymentLink = await createRazorpayPaymentLink(
       totalPaise,
       order.id,
-      "OrderMind — Chai Point Express (autonomous agent order)"
+      `OrderMind — ${merchant.name} (autonomous agent order)`
     );
 
     await supabase

@@ -4,7 +4,8 @@ import { getCatalogByIds } from "@/lib/catalog";
 import { chooseUpsell } from "@/lib/upsell";
 import { computeCartTotalPaise, evaluateMandate } from "@/lib/guardrails";
 import { verifyMandate } from "@/lib/mandate";
-import { SPEND_CAP_PAISE, type CartItem } from "@/lib/types";
+import type { CartItem } from "@/lib/types";
+import { getMerchant } from "@/lib/merchants";
 
 /**
  * Prices a basket for a buyer agent, and — if the buyer presents its mandate
@@ -38,6 +39,7 @@ export async function POST(req: NextRequest) {
   }
 
   const supabase = getSupabaseAdmin();
+  const merchant = getMerchant(req.nextUrl.searchParams.get("merchant"));
   const catalogMap = await getCatalogByIds(
     supabase,
     requested.map((i) => i.catalog_id)
@@ -105,8 +107,8 @@ export async function POST(req: NextRequest) {
         reason: verification.reason,
       };
     } else {
-      const withoutUpsell = evaluateMandate(subtotalPaise, verification.mandate.max_amount_paise);
-      const withUpsell = evaluateMandate(totalWithUpsellPaise, verification.mandate.max_amount_paise);
+      const withoutUpsell = evaluateMandate(subtotalPaise, verification.mandate.max_amount_paise, merchant.autonomousCapPaise);
+      const withUpsell = evaluateMandate(totalWithUpsellPaise, verification.mandate.max_amount_paise, merchant.autonomousCapPaise);
       acceptance = {
         would_accept: withoutUpsell.outcome === "mandate_satisfied",
         binding_limit: withoutUpsell.bindingLimit,
@@ -132,7 +134,8 @@ export async function POST(req: NextRequest) {
     subtotal_paise: subtotalPaise,
     upsell_offer: upsellOffer,
     total_with_upsell_paise: totalWithUpsellPaise,
-    merchant_autonomous_cap_paise: SPEND_CAP_PAISE,
+    merchant: { id: merchant.id, name: merchant.name },
+    merchant_autonomous_cap_paise: merchant.autonomousCapPaise,
     acceptance,
     note: "This quote is indicative. /api/agent/order independently re-derives every price and re-runs every check before any payment is created.",
   });

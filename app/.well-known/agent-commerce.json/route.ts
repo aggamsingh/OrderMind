@@ -1,6 +1,7 @@
-import { NextResponse } from "next/server";
-import { SPEND_CAP_PAISE, MAX_RETRIES } from "@/lib/types";
+import { NextRequest, NextResponse } from "next/server";
+import { MAX_RETRIES } from "@/lib/types";
 import { AGENT_LIMITS } from "@/lib/agent-trust";
+import { MERCHANTS, getMerchant } from "@/lib/merchants";
 
 /**
  * Machine-readable merchant manifest — the discovery entry point that makes
@@ -18,16 +19,35 @@ import { AGENT_LIMITS } from "@/lib/agent-trust";
  * request whether this merchant can serve it at all — rather than discovering
  * the cap by being refused. The refusal still happens server-side regardless
  * (lib/guardrails.ts); this block is a courtesy, never the enforcement.
+ *
+ * `?merchant=` selects a storefront. Each publishes its OWN terms, and they
+ * differ on purpose — see lib/merchants.ts.
  */
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const merchant = getMerchant(req.nextUrl.searchParams.get("merchant"));
+
   const body = {
     protocol_version: "0.1",
     merchant: {
-      id: "chai-point-express",
-      name: "Chai Point Express",
-      category: "food_and_beverage.cafe",
+      id: merchant.id,
+      name: merchant.name,
+      tagline: merchant.tagline,
+      category: merchant.category,
       currency: "INR",
       country: "IN",
+    },
+    /**
+     * Other merchants this buyer could also transact with. Linked rather than
+     * summarised: one authoritative statement of any merchant's terms, in its
+     * own manifest, so a directory can never drift out of sync with reality.
+     */
+    directory: {
+      endpoint: "/api/agent/merchants",
+      siblings: MERCHANTS.filter((m) => m.id !== merchant.id).map((m) => ({
+        id: m.id,
+        name: m.name,
+        manifest: `/.well-known/agent-commerce.json?merchant=${m.id}`,
+      })),
     },
     payments: {
       processor: "razorpay",
@@ -60,9 +80,9 @@ export async function GET() {
       },
     },
     endpoints: {
-      catalog: "/api/agent/catalog",
-      quote: "/api/agent/quote",
-      order: "/api/agent/order",
+      catalog: `/api/agent/catalog?merchant=${merchant.id}`,
+      quote: `/api/agent/quote?merchant=${merchant.id}`,
+      order: `/api/agent/order?merchant=${merchant.id}`,
       order_status: "/api/agent/order/{order_id}",
       audit: "/api/audit",
     },
@@ -70,8 +90,13 @@ export async function GET() {
      * The rules of engagement, stated before a buyer commits to anything.
      */
     terms: {
-      /** Autonomous orders above this are refused outright — no human is present to approve them. */
-      autonomous_order_cap_paise: SPEND_CAP_PAISE,
+      /**
+       * Autonomous orders above this are refused outright — no human is
+       * present to approve them. This value differs per merchant: a buyer
+       * that assumes one merchant's ceiling applies to another will be
+       * refused, which is exactly the assumption worth breaking early.
+       */
+      autonomous_order_cap_paise: merchant.autonomousCapPaise,
       /**
        * A signed spend mandate is mandatory. The merchant verifies the
        * signature itself and enforces the buyer's own ceiling — a buyer

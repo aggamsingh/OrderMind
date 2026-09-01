@@ -107,7 +107,135 @@ const SELECT_TOOL: ToolDefinition[] = [
   },
 ];
 
+/**
+ * Comparison shopping: discover every merchant in the directory, price the
+ * SAME goal at each, and buy from whichever is cheapest for what it can
+ * actually supply.
+ *
+ * This is the part a single-merchant demo can never show. A buyer that can
+ * only be pointed at one storefront isn't shopping — it's executing a
+ * purchase someone else already decided. Here the agent reads each merchant's
+ * own manifest (their caps genuinely differ), quotes both, and picks.
+ */
+async function compareAndBuy() {
+  console.log(c.bold("\n══════ AUTONOMOUS BUYER AGENT — COMPARISON SHOPPING ══════"));
+  console.log(`${c.dim("goal    ")} "${GOAL}"`);
+  console.log(`${c.dim("budget  ")} ${rupees(BUDGET_PAISE)}`);
+
+  say("Discovering the market", `GET ${MERCHANT}/api/agent/merchants`);
+  const dir = (await (await fetch(`${MERCHANT}/api/agent/merchants`)).json()) as {
+    merchants: { id: string; name: string; tagline: string }[];
+  };
+  console.log(`    ${dir.merchants.length} merchants available`);
+
+  type Bid = {
+    id: string;
+    name: string;
+    cap: number;
+    subtotal: number;
+    items: { catalog_id: string; qty: number; why: string }[];
+  };
+  const bids: Bid[] = [];
+
+  for (const m of dir.merchants) {
+    say(`Pricing at ${m.name}`, m.tagline);
+
+    const manifest = (await (
+      await fetch(`${MERCHANT}/.well-known/agent-commerce.json?merchant=${m.id}`)
+    ).json()) as Manifest;
+    const cap = manifest.terms.autonomous_order_cap_paise;
+    console.log(`    autonomous cap: ${rupees(cap)}`);
+
+    const catalog = (await (
+      await fetch(`${MERCHANT}/api/agent/catalog?merchant=${m.id}`)
+    ).json()) as { items: CatalogItem[] };
+
+    if (catalog.items.length === 0) {
+      console.log(`    ${c.yellow("no stock — skipping")}`);
+      continue;
+    }
+
+    const chosen = await decideItems(catalog.items);
+    const quoteRes = await fetch(`${MERCHANT}/api/agent/quote?merchant=${m.id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ items: chosen.map((i) => ({ catalog_id: i.catalog_id, qty: i.qty })) }),
+    });
+    const quote = await quoteRes.json();
+    if (!quoteRes.ok) {
+      console.log(`    ${c.yellow(`could not quote: ${quote.error ?? quoteRes.status}`)}`);
+      continue;
+    }
+
+    console.log(
+      `    basket: ${chosen
+        .map((i) => catalog.items.find((c2) => c2.id === i.catalog_id)?.name ?? i.catalog_id)
+        .join(", ")}`
+    );
+    console.log(`    quoted: ${c.bold(rupees(quote.subtotal_paise))}`);
+    bids.push({ id: m.id, name: m.name, cap, subtotal: quote.subtotal_paise, items: chosen });
+  }
+
+  if (bids.length === 0) {
+    console.log(c.red("\nNo merchant could quote this goal."));
+    return;
+  }
+
+  // Only consider merchants that can actually complete the order unattended:
+  // one whose own cap sits below the basket would refuse it anyway.
+  const viable = bids.filter((b) => b.subtotal <= b.cap && b.subtotal <= BUDGET_PAISE);
+  say("Comparing offers");
+  for (const b of bids) {
+    const why =
+      b.subtotal > BUDGET_PAISE
+        ? c.red("over my mandate")
+        : b.subtotal > b.cap
+          ? c.red("over that merchant's autonomous cap")
+          : c.green("viable");
+    console.log(`    ${b.name.padEnd(24)} ${rupees(b.subtotal).padStart(9)}  ${why}`);
+  }
+
+  if (viable.length === 0) {
+    console.log(c.red("\n    No merchant can serve this within both limits. Buying nothing."));
+    return;
+  }
+
+  const winner = viable.sort((a, b) => a.subtotal - b.subtotal)[0];
+  console.log(`\n    ${c.green("→ buying from")} ${c.bold(winner.name)} at ${rupees(winner.subtotal)}`);
+
+  const mandate = issueMandate({
+    buyer_agent_id: BUYER_AGENT_ID,
+    principal: PRINCIPAL,
+    max_amount_paise: BUDGET_PAISE,
+    purpose: GOAL,
+  });
+
+  say("Placing order", `POST /api/agent/order?merchant=${winner.id}`);
+  const res = await fetch(`${MERCHANT}/api/agent/order?merchant=${winner.id}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Agent-Mandate": mandate.token },
+    body: JSON.stringify({
+      items: winner.items.map((i) => ({ catalog_id: i.catalog_id, qty: i.qty })),
+      buyer_note: `Autonomous purchase for: ${GOAL}`,
+    }),
+  });
+  const data = await res.json();
+
+  if (!res.ok || !data.accepted) {
+    console.log(`    ${c.red("REFUSED")} — ${data.message ?? data.error}`);
+    return;
+  }
+  console.log(`    ${c.green("ACCEPTED")} — order ${data.order_id}`);
+  console.log(`    total:   ${c.bold(rupees(data.total_paise))}`);
+  console.log(`    pay at:  ${c.cyan(data.payment_link)}`);
+  const check = verifyReceipt(data.signed_receipt);
+  console.log(`    receipt: ${check.valid ? c.green("verified") : c.red("INVALID")}`);
+  await watchSettlement(data.order_id, 2, 3000);
+}
+
 async function main() {
+  if (SCENARIO === "compare") return compareAndBuy();
+
   console.log(c.bold("\n══════ AUTONOMOUS BUYER AGENT ══════"));
   console.log(`${c.dim("agent   ")} ${BUYER_AGENT_ID}`);
   console.log(`${c.dim("principal")} ${PRINCIPAL}`);

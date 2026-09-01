@@ -150,7 +150,17 @@ export type MandateDecision =
  * `totalPaise` must be recomputed from DB catalog prices by the caller —
  * never taken from anything the buyer agent sent.
  */
-export function evaluateMandate(totalPaise: number, mandateMaxPaise: number): MandateDecision {
+export function evaluateMandate(
+  totalPaise: number,
+  mandateMaxPaise: number,
+  /**
+   * Each storefront sets its own autonomous ceiling (lib/merchants.ts), so a
+   * buyer cannot carry one merchant's limit over to the next. Defaults to the
+   * project-wide cap, which keeps every existing single-merchant caller
+   * behaving exactly as before.
+   */
+  merchantCapPaise: number = SPEND_CAP_PAISE
+): MandateDecision {
   const rupees = (paise: number) => `₹${(paise / 100).toFixed(2)}`;
 
   if (totalPaise > mandateMaxPaise) {
@@ -165,20 +175,20 @@ export function evaluateMandate(totalPaise: number, mandateMaxPaise: number): Ma
     };
   }
 
-  if (totalPaise > SPEND_CAP_PAISE) {
+  if (totalPaise > merchantCapPaise) {
     return {
       outcome: "blocked_exceeds_merchant_cap",
       totalPaise,
-      bindingLimitPaise: SPEND_CAP_PAISE,
+      bindingLimitPaise: merchantCapPaise,
       bindingLimit: "merchant_cap",
       reason: `Order total ${rupees(totalPaise)} is within the buyer's mandate but exceeds this merchant's ${rupees(
-        SPEND_CAP_PAISE
+        merchantCapPaise
       )} autonomous-order cap. Refused — an order this size requires a human confirmation this merchant cannot obtain from an autonomous buyer.`,
     };
   }
 
-  const bindingLimit = mandateMaxPaise <= SPEND_CAP_PAISE ? "buyer_mandate" : "merchant_cap";
-  const bindingLimitPaise = Math.min(mandateMaxPaise, SPEND_CAP_PAISE);
+  const bindingLimit = mandateMaxPaise <= merchantCapPaise ? "buyer_mandate" : "merchant_cap";
+  const bindingLimitPaise = Math.min(mandateMaxPaise, merchantCapPaise);
 
   return {
     outcome: "mandate_satisfied",
@@ -187,7 +197,7 @@ export function evaluateMandate(totalPaise: number, mandateMaxPaise: number): Ma
     bindingLimit,
     reason: `Order total ${rupees(totalPaise)} is within both the buyer's mandate (${rupees(
       mandateMaxPaise
-    )}) and this merchant's autonomous cap (${rupees(SPEND_CAP_PAISE)}). Binding limit: ${
+    )}) and this merchant's autonomous cap (${rupees(merchantCapPaise)}). Binding limit: ${
       bindingLimit === "buyer_mandate" ? "the buyer's mandate" : "the merchant cap"
     } at ${rupees(bindingLimitPaise)}.`,
   };

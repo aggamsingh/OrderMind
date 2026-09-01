@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { searchCatalog } from "@/lib/catalog";
+import { getMerchant } from "@/lib/merchants";
 import type { CatalogItem } from "@/lib/types";
 
 /**
@@ -17,6 +18,7 @@ export async function GET(req: NextRequest) {
   const supabase = getSupabaseAdmin();
   const q = req.nextUrl.searchParams.get("q");
   const category = req.nextUrl.searchParams.get("category") ?? undefined;
+  const merchant = getMerchant(req.nextUrl.searchParams.get("merchant"));
 
   let items: CatalogItem[];
   if (q) {
@@ -31,7 +33,13 @@ export async function GET(req: NextRequest) {
     items = (data ?? []) as CatalogItem[];
   }
 
+  // Each storefront sells its own range. Filtering here (rather than letting
+  // a buyer request anything from the shared table) is what makes the two
+  // merchants genuinely different counterparties to shop between.
+  items = items.filter((i) => merchant.sells.includes(i.category));
+
   return NextResponse.json({
+    merchant: { id: merchant.id, name: merchant.name },
     currency: "INR",
     count: items.length,
     items: items.map((item) => ({
