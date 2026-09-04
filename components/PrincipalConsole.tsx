@@ -47,6 +47,9 @@ const DEFAULT_AGENT = "buyer-agent://demo-procurement-bot/v1";
  */
 export default function PrincipalConsole() {
   const [principal, setPrincipal] = useState(DEFAULT_PRINCIPAL);
+  const [signedInAs, setSignedInAs] = useState<string | null | undefined>(undefined);
+  const [password, setPassword] = useState("");
+  const [authError, setAuthError] = useState<string | null>(null);
   const [agentId, setAgentId] = useState(DEFAULT_AGENT);
   const [amount, setAmount] = useState(250);
   const [purpose, setPurpose] = useState("afternoon coffee run");
@@ -57,12 +60,55 @@ export default function PrincipalConsole() {
   const [note, setNote] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const res = await fetch(`/api/principal/mandates?principal=${encodeURIComponent(principal)}`);
+    const res = await fetch("/api/principal/mandates");
     if (!res.ok) return;
     const data = await res.json();
     setRows(data.mandates ?? []);
     setKills(data.kill_switches ?? []);
-  }, [principal]);
+  }, []);
+
+  // Who the server says we are. Asked once on mount; the console renders a
+  // sign-in form until it answers, so no control is ever shown to someone who
+  // could not actually use it.
+  useEffect(() => {
+    let cancelled = false;
+    async function whoami() {
+      const res = await fetch("/api/principal/session");
+      if (cancelled) return;
+      const data = await res.json();
+      if (cancelled) return;
+      setSignedInAs(data.principal ?? null);
+      if (data.principal) setPrincipal(data.principal);
+    }
+    whoami();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function signIn() {
+    setAuthError(null);
+    const res = await fetch("/api/principal/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ principal, password }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setAuthError(data.message ?? "Could not sign in.");
+      return;
+    }
+    setPassword("");
+    setSignedInAs(data.principal);
+  }
+
+  async function signOut() {
+    await fetch("/api/principal/session", { method: "DELETE" });
+    setSignedInAs(null);
+    setRows([]);
+    setKills([]);
+    setIssued(null);
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -70,8 +116,11 @@ export default function PrincipalConsole() {
     // Polls rather than renders once: an agent can spend against a mandate
     // seconds after it is granted, and a stale page is the one thing a
     // revocation control must never be.
+    if (!signedInAs) return;
+
     async function poll() {
-      const res = await fetch(`/api/principal/mandates?principal=${encodeURIComponent(principal)}`);
+      // No principal in the URL: the server scopes this to the session.
+      const res = await fetch("/api/principal/mandates");
       if (!res.ok || cancelled) return;
       const data = await res.json();
       if (cancelled) return;
@@ -85,7 +134,7 @@ export default function PrincipalConsole() {
       cancelled = true;
       clearInterval(t);
     };
-  }, [principal]);
+  }, [signedInAs]);
 
   async function grant() {
     setBusy(true);
@@ -95,7 +144,6 @@ export default function PrincipalConsole() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          principal,
           buyer_agent_id: agentId,
           max_amount_paise: Math.round(amount * 100),
           purpose,
@@ -136,7 +184,6 @@ export default function PrincipalConsole() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           scope: "kill",
-          principal,
           reason: "Principal revoked all outstanding authority.",
         }),
       });
@@ -152,8 +199,68 @@ export default function PrincipalConsole() {
   const committed = rows.filter((r) => r.state === "live").reduce((s, r) => s + r.max_amount_paise, 0);
   const spent = rows.reduce((s, r) => s + r.spent_paise, 0);
 
+  if (signedInAs === undefined) {
+    return (
+      <p className="rounded-xl border border-edge bg-surface px-4 py-10 text-center text-sm text-ink-faint">
+        Checking your session…
+      </p>
+    );
+  }
+
+  if (!signedInAs) {
+    return (
+      <div className="mx-auto w-full max-w-md rounded-xl border border-edge bg-surface p-5 shadow-sm">
+        <h2 className="text-sm font-semibold text-ink">Sign in to your console</h2>
+        <p className="mt-1 text-xs leading-relaxed text-ink-muted">
+          These controls can stop an agent mid-purchase, so they are not open to whoever knows an
+          email address. Everything below is scoped server-side to whoever signs in here.
+        </p>
+
+        <div className="mt-4 flex flex-col gap-3">
+          <Field label="You (principal)" value={principal} onChange={setPrincipal} />
+          <label className="flex flex-col gap-1.5">
+            <span className="text-xs font-medium uppercase tracking-wide text-ink-faint">
+              Console password
+            </span>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && signIn()}
+              className="rounded-lg border border-edge bg-bg px-3 py-2 text-sm text-ink outline-none focus:border-accent-edge"
+            />
+          </label>
+          <button
+            onClick={signIn}
+            className="rounded-lg bg-accent px-4 py-2.5 text-sm font-semibold text-white transition hover:opacity-90"
+          >
+            Sign in
+          </button>
+          {authError && <p className="text-xs text-refuse">{authError}</p>}
+          <p className="text-[11px] leading-relaxed text-ink-faint">
+            A shared password stands in for a real identity provider here. What is not a stand-in:
+            the signed session it issues is the only thing the server will accept as proof of which
+            principal you are.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-5">
+      <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-edge bg-surface px-4 py-2.5">
+        <p className="text-xs text-ink-muted">
+          Signed in as <span className="font-medium text-ink">{signedInAs}</span>
+        </p>
+        <button
+          onClick={signOut}
+          className="rounded-lg border border-edge px-3 py-1.5 text-xs font-medium text-ink-muted transition hover:border-edge-strong hover:text-ink"
+        >
+          Sign out
+        </button>
+      </div>
+
       {/* exposure at a glance */}
       <div className="grid grid-cols-3 gap-2">
         {[
@@ -177,7 +284,6 @@ export default function PrincipalConsole() {
         </p>
 
         <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <Field label="You (principal)" value={principal} onChange={setPrincipal} disabled={busy} />
           <Field label="Your agent" value={agentId} onChange={setAgentId} disabled={busy} />
           <Field label="Purpose" value={purpose} onChange={setPurpose} disabled={busy} />
           <label className="flex flex-col gap-1.5">

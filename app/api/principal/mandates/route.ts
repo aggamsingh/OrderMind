@@ -1,6 +1,24 @@
 import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { getSupabaseAdmin } from "@/lib/supabase";
 import { issueMandate } from "@/lib/mandate";
+import { readPrincipalSession, PRINCIPAL_COOKIE } from "@/lib/principal-auth";
+
+/**
+ * The signed-in principal, or null. Identity comes from a server-issued
+ * cookie — never from a query param or request body, which is what let
+ * anyone previously read or revoke a stranger's mandates just by naming
+ * them. See lib/principal-auth.ts.
+ */
+async function currentPrincipal(): Promise<string | null> {
+  const jar = await cookies();
+  return readPrincipalSession(jar.get(PRINCIPAL_COOKIE)?.value);
+}
+
+const UNAUTHORISED = NextResponse.json(
+  { error: "not_signed_in", message: "Sign in to the principal console first." },
+  { status: 401 }
+);
 
 /**
  * The principal's side of the relationship: grant authority, and see what has
@@ -12,24 +30,27 @@ import { issueMandate } from "@/lib/mandate";
  * Without an answer to that, delegated authority is something you hand over
  * and hope about.
  *
- * DEMO SCOPE, stated plainly: there is no authentication here. A real
- * deployment would sit this behind the principal's login and scope every
- * query to their identity — the console is doing exactly what a signed-in
- * user's session would do, minus the sign-in. It is left out because
- * authentication is well-understood plumbing that would add nothing to what
- * this project is trying to demonstrate, not because it was overlooked.
+ * Every route here is scoped to the signed-in principal (lib/principal-auth.ts).
+ * A shared console password stands in for a real identity provider, but the
+ * part that carries the guarantee is real: authority is derived server-side
+ * from a signed session, never asserted by the caller.
  */
 
-export async function GET(req: NextRequest) {
-  const supabase = getSupabaseAdmin();
-  const principal = req.nextUrl.searchParams.get("principal");
+export async function GET() {
+  const principal = await currentPrincipal();
+  if (!principal) return UNAUTHORISED;
 
-  let query = supabase
+  const supabase = getSupabaseAdmin();
+
+  // Always scoped to the signed-in principal. A console that could be
+  // pointed at someone else's mandates by changing a query string would
+  // make every control on it a control over their money.
+  const query = supabase
     .from("mandates")
     .select("*")
+    .eq("principal", principal)
     .order("issued_at", { ascending: false })
     .limit(50);
-  if (principal) query = query.eq("principal", principal);
 
   const { data: mandates, error } = await query;
   if (error) {
@@ -82,6 +103,7 @@ export async function GET(req: NextRequest) {
   const { data: killSwitches } = await supabase
     .from("principal_kill_switches")
     .select("*")
+    .eq("principal", principal)
     .order("effective_at", { ascending: false })
     .limit(10);
 
@@ -99,7 +121,6 @@ export async function GET(req: NextRequest) {
  */
 export async function POST(req: NextRequest) {
   let body: {
-    principal?: string;
     buyer_agent_id?: string;
     max_amount_paise?: number;
     purpose?: string;
@@ -111,15 +132,19 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const principal = body.principal?.trim();
+  // Authority is granted BY the signed-in principal, so it is taken from the
+  // session — a caller cannot mint a mandate in someone else's name.
+  const principal = await currentPrincipal();
+  if (!principal) return UNAUTHORISED;
+
   const buyerAgentId = body.buyer_agent_id?.trim();
   const max = body.max_amount_paise;
 
-  if (!principal || !buyerAgentId || typeof max !== "number" || !Number.isInteger(max) || max <= 0) {
+  if (!buyerAgentId || typeof max !== "number" || !Number.isInteger(max) || max <= 0) {
     return NextResponse.json(
       {
         error: "invalid_request",
-        message: "principal, buyer_agent_id and a positive whole max_amount_paise are required.",
+        message: "buyer_agent_id and a positive whole max_amount_paise are required.",
       },
       { status: 400 }
     );

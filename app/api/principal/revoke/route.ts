@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { getSupabaseAdmin } from "@/lib/supabase";
+import { readPrincipalSession, PRINCIPAL_COOKIE } from "@/lib/principal-auth";
 
 /**
  * Withdraws authority the principal previously granted.
@@ -24,7 +26,6 @@ export async function POST(req: NextRequest) {
   let body: {
     scope?: "mandate" | "kill";
     nonce?: string;
-    principal?: string;
     buyer_agent_id?: string | null;
     reason?: string;
   };
@@ -32,6 +33,18 @@ export async function POST(req: NextRequest) {
     body = await req.json();
   } catch {
     return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  // Identity from the signed session, never the body. Before this, anyone
+  // who knew an email address could fire that principal's kill switch and
+  // stop their agent mid-purchase.
+  const jar = await cookies();
+  const principal = readPrincipalSession(jar.get(PRINCIPAL_COOKIE)?.value);
+  if (!principal) {
+    return NextResponse.json(
+      { error: "not_signed_in", message: "Sign in to the principal console first." },
+      { status: 401 }
+    );
   }
 
   const supabase = getSupabaseAdmin();
@@ -52,6 +65,9 @@ export async function POST(req: NextRequest) {
         revoked_reason: reason ?? "Revoked by principal.",
       })
       .eq("nonce", body.nonce)
+      // Only your own mandates. Without this, a valid session could revoke
+      // any mandate in the system by guessing its nonce.
+      .eq("principal", principal)
       .is("revoked_at", null) // don't overwrite an earlier revocation's timestamp
       .select("nonce, revoked_at")
       .maybeSingle();
@@ -73,14 +89,6 @@ export async function POST(req: NextRequest) {
   }
 
   if (body.scope === "kill") {
-    const principal = body.principal?.trim();
-    if (!principal) {
-      return NextResponse.json(
-        { error: "invalid_request", message: "principal is required for a kill switch." },
-        { status: 400 }
-      );
-    }
-
     const { data, error } = await supabase
       .from("principal_kill_switches")
       .insert({
