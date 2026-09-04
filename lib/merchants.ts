@@ -8,15 +8,20 @@
  * storefront can never show. Two merchants is the smallest number that makes
  * "shopping" mean anything.
  *
- * DEMO SIMPLIFICATION, stated plainly: in production each merchant would be a
- * separate host serving its own /.well-known/agent-commerce.json under its own
- * domain and its own Razorpay account. Here they are two storefronts inside
- * one deployment, distinguished by `?merchant=`, sharing one catalog table
- * partitioned by category and one test-mode Razorpay account. What that costs
- * in realism it buys back in something you can actually watch happen. The
- * parts that matter — separate manifests, separate caps, separate upsell
- * behaviour, and a buyer that treats them as independent counterparties over
- * plain HTTP — are genuinely separate.
+ * WHAT IS AND IS NOT SEPARATE, stated plainly:
+ *
+ *   Separate       manifests, autonomous caps, catalog ranges, upsell
+ *                  behaviour, and a buyer that treats them as independent
+ *                  counterparties reachable only over plain HTTP.
+ *   Configurable   Razorpay account (razorpayKeyIdEnv/razorpayKeySecretEnv)
+ *                  and public origin (hostEnv). Set them and a merchant
+ *                  settles into its own account on its own host; leave them
+ *                  and it falls back to the deployment's, which the manifest
+ *                  reports as settlement_account: "shared_with_deployment"
+ *                  rather than quietly implying otherwise.
+ *   Shared         one deployment and one catalog table partitioned by
+ *                  category, because two Next.js apps would cost a day and
+ *                  demonstrate nothing this does not.
  */
 
 export type Merchant = {
@@ -32,6 +37,23 @@ export type Merchant = {
    * limits it learned from one merchant apply to the next.
    */
   autonomousCapPaise: number;
+  /**
+   * Env var names holding THIS merchant's Razorpay credentials. When unset,
+   * the merchant falls back to the shared default keys.
+   *
+   * Genuinely separate merchants settle into genuinely separate accounts —
+   * money landing in one balance rather than two is the difference between
+   * two storefronts and two businesses. Wired as config so adding a real
+   * second account is an env change, not a code change.
+   */
+  razorpayKeyIdEnv?: string;
+  razorpayKeySecretEnv?: string;
+  /**
+   * Public origin this merchant is served from, when it has its own. Used to
+   * emit absolute URLs in its manifest so a buyer agent can follow them from
+   * anywhere. Unset means the same origin as the request.
+   */
+  hostEnv?: string;
 };
 
 export const MERCHANTS: Merchant[] = [
@@ -42,6 +64,9 @@ export const MERCHANTS: Merchant[] = [
     category: "food_and_beverage.cafe",
     sells: ["beverage", "snack"],
     autonomousCapPaise: 50000, // ₹500
+    razorpayKeyIdEnv: "RAZORPAY_KEY_ID",
+    razorpayKeySecretEnv: "RAZORPAY_KEY_SECRET",
+    hostEnv: "MERCHANT_CHAI_HOST",
   },
   {
     id: "sweet-street-desserts",
@@ -52,6 +77,10 @@ export const MERCHANTS: Merchant[] = [
     // Deliberately tighter than Chai Point's. A buyer agent that assumed one
     // merchant's cap generalises will be refused here, which is the lesson.
     autonomousCapPaise: 30000, // ₹300
+    // Falls back to the shared keys until a second Razorpay account exists.
+    razorpayKeyIdEnv: "RAZORPAY_SWEET_KEY_ID",
+    razorpayKeySecretEnv: "RAZORPAY_SWEET_KEY_SECRET",
+    hostEnv: "MERCHANT_SWEET_HOST",
   },
 ];
 
@@ -64,4 +93,39 @@ export function getMerchant(id?: string | null): Merchant {
 
 export function isKnownMerchant(id?: string | null): boolean {
   return !!id && MERCHANTS.some((m) => m.id === id);
+}
+
+/**
+ * Resolves a merchant's Razorpay credentials, falling back to the shared
+ * default when it has none of its own.
+ *
+ * `isOwnAccount` is returned rather than hidden: a merchant quietly settling
+ * into another merchant's account is exactly the kind of thing that belongs
+ * in a manifest, not something to be discovered when the money turns up in
+ * the wrong balance.
+ */
+export function merchantRazorpayCredentials(merchant: Merchant): {
+  keyId?: string;
+  keySecret?: string;
+  isOwnAccount: boolean;
+} {
+  const keyId = merchant.razorpayKeyIdEnv ? process.env[merchant.razorpayKeyIdEnv] : undefined;
+  const keySecret = merchant.razorpayKeySecretEnv
+    ? process.env[merchant.razorpayKeySecretEnv]
+    : undefined;
+
+  // Only counts as its own account if BOTH halves are present. A half-set
+  // pair would otherwise mix one merchant's key id with another's secret.
+  if (keyId && keySecret) return { keyId, keySecret, isOwnAccount: true };
+
+  return {
+    keyId: process.env.RAZORPAY_KEY_ID,
+    keySecret: process.env.RAZORPAY_KEY_SECRET,
+    isOwnAccount: false,
+  };
+}
+
+/** This merchant's own public origin, when it has been given one. */
+export function merchantHost(merchant: Merchant): string | null {
+  return (merchant.hostEnv ? process.env[merchant.hostEnv] : undefined) ?? null;
 }

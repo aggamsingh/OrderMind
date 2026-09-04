@@ -1,12 +1,18 @@
 import Razorpay from "razorpay";
 import crypto from "crypto";
+import { merchantRazorpayCredentials, type Merchant } from "./merchants";
 
 // Thin wrapper around the Razorpay SDK, test-mode only. This module is the
 // ONLY place Razorpay's Orders/Payment Links APIs are called from — every
 // caller must go through lib/guardrails.ts first. See guardrails.ts header.
-export function getRazorpayClient() {
-  const keyId = process.env.RAZORPAY_KEY_ID;
-  const keySecret = process.env.RAZORPAY_KEY_SECRET;
+export function getRazorpayClient(merchant?: Merchant) {
+  // Each merchant settles into its OWN Razorpay account when it has one.
+  // Two storefronts sharing a balance are two storefronts; two storefronts
+  // with separate accounts are two businesses, and the difference is where
+  // the money actually lands.
+  const { keyId, keySecret } = merchant
+    ? merchantRazorpayCredentials(merchant)
+    : { keyId: process.env.RAZORPAY_KEY_ID, keySecret: process.env.RAZORPAY_KEY_SECRET };
 
   if (!keyId || !keySecret) {
     throw new Error(
@@ -125,8 +131,13 @@ export function verifyWebhookSignature(rawBody: string, signature: string): bool
  * `receipt` carries our own orders.id so a human reading the Razorpay
  * dashboard can trace any payment back to a row in this database.
  */
-export async function createRazorpayOrder(totalPaise: number, receipt: string, notes?: Record<string, string>) {
-  const razorpay = getRazorpayClient();
+export async function createRazorpayOrder(
+  totalPaise: number,
+  receipt: string,
+  notes?: Record<string, string>,
+  merchant?: Merchant
+) {
+  const razorpay = getRazorpayClient(merchant);
   return razorpay.orders.create({
     amount: totalPaise,
     currency: "INR",
@@ -135,9 +146,15 @@ export async function createRazorpayOrder(totalPaise: number, receipt: string, n
   });
 }
 
-/** The public key id, safe to hand to the browser — Razorpay Checkout needs it. */
-export function getRazorpayKeyId(): string {
-  const keyId = process.env.RAZORPAY_KEY_ID;
+/**
+ * The public key id, safe to hand to the browser — Razorpay Checkout needs
+ * it. Scoped per merchant so the checkout page opens against the account
+ * that will actually receive the money.
+ */
+export function getRazorpayKeyId(merchant?: Merchant): string {
+  const keyId = merchant
+    ? merchantRazorpayCredentials(merchant).keyId
+    : process.env.RAZORPAY_KEY_ID;
   if (!keyId) throw new Error("Missing RAZORPAY_KEY_ID in .env.local.");
   return keyId;
 }

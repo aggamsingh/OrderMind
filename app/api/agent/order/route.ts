@@ -339,11 +339,13 @@ export async function POST(req: NextRequest) {
   const order = orderRow as Order;
 
   try {
-    const rzpOrder = await createRazorpayOrder(totalPaise, order.id, {
-      internal_order_id: order.id,
-      merchant: merchant.id,
-      channel: "agent_to_agent",
-    });
+    const rzpOrder = await createRazorpayOrder(
+      totalPaise,
+      order.id,
+      { internal_order_id: order.id, merchant: merchant.id, channel: "agent_to_agent" },
+      // Settles into this merchant's own account when it has one.
+      merchant
+    );
 
     await supabase
       .from("orders")

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { MAX_RETRIES } from "@/lib/types";
 import { AGENT_LIMITS } from "@/lib/agent-trust";
-import { MERCHANTS, getMerchant } from "@/lib/merchants";
+import { MERCHANTS, getMerchant, merchantRazorpayCredentials, merchantHost } from "@/lib/merchants";
 
 /**
  * Machine-readable merchant manifest — the discovery entry point that makes
@@ -25,6 +25,8 @@ import { MERCHANTS, getMerchant } from "@/lib/merchants";
  */
 export async function GET(req: NextRequest) {
   const merchant = getMerchant(req.nextUrl.searchParams.get("merchant"));
+  const { isOwnAccount } = merchantRazorpayCredentials(merchant);
+  const host = merchantHost(merchant);
 
   const body = {
     protocol_version: "0.1",
@@ -41,6 +43,8 @@ export async function GET(req: NextRequest) {
      * summarised: one authoritative statement of any merchant's terms, in its
      * own manifest, so a directory can never drift out of sync with reality.
      */
+    /** This merchant's own origin, when it has one. */
+    host,
     directory: {
       endpoint: "/api/agent/merchants",
       siblings: MERCHANTS.filter((m) => m.id !== merchant.id).map((m) => ({
@@ -54,6 +58,13 @@ export async function GET(req: NextRequest) {
       mode: "test",
       methods: ["card", "upi", "netbanking", "wallet"],
       settlement: "razorpay_order",
+      /**
+       * Whether this merchant settles into its own Razorpay account or shares
+       * the deployment's default. Declared rather than assumed: a buyer (or a
+       * reviewer) is entitled to know whether two storefronts are two
+       * businesses or one wearing two names.
+       */
+      settlement_account: isOwnAccount ? "dedicated" : "shared_with_deployment",
       /**
        * How far a buyer agent can get WITHOUT a human, stated honestly.
        *
