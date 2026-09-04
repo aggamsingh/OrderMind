@@ -503,3 +503,24 @@ This is the first time this project has proven the complete real-world path: Raz
 **Files touched:** `lib/revocation.ts`, `lib/errors.ts`, `lib/upsell.ts`, `lib/agent-trust.ts`, `lib/merchants.ts`, `lib/guardrails.ts` (`evaluateRefund`), `app/api/principal/*`, `app/api/agent/order/[orderId]/{route,refund}.ts`, `app/principal/page.tsx`, `components/PrincipalConsole.tsx`, `scripts/{buyer-agent,test-mandates,cleanup-payment-links}.ts`, `supabase/migrations/002_*`, and every numbered doc.
 
 **Still open:** migration 002 needs applying before revocation and refunds can be verified live; a fresh Razorpay test account is needed before any successful order can be placed at all. Then: the backup demo video and a full dry run.
+
+---
+
+## [Day 9] — 2026-09-04 (reframing: a product that qualifies, not a project built to a rubric)
+
+**Worked on:** Founder flagged a positioning problem worth fixing: the project should read as a real product that *happens* to qualify for the track, not as something reverse-engineered from a brief. Judges can tell the difference, and rubric-chasing reads as weaker work even when the work is identical.
+
+**What was actually wrong.** The substance was fine; the *justifications* were the tell. Five places argued from the brief instead of from the problem:
+- `lib/mandate.ts` — "the thing Track 1 is actually about", and "the protocols this track exists because of"
+- `lib/merchants.ts` — "Track 1 asks for merchants (plural)", plus "something judges can actually watch happen" in a code comment
+- `08_AGENT_PROTOCOL.md` — the same "this track exists because of" framing
+- `09_README.md` — the track named in line 5, above the problem statement
+- `07_PITCH_DECK_OUTLINE.md` — the track on the title slide
+
+**What changed:** each justification now stands on its own merits. Multiple merchants are justified because "two is the smallest number that makes shopping mean anything", not because the brief said *merchants* plural. The mandate concept is framed as one implementation of an idea the payment protocols are converging on — deliberately interoperable rather than a private dialect — instead of as a response to why the track exists. The README leads with the product and demotes the submission to a footer. The pitch outline drops the track from the title slide, with a note explaining why: it is on the submission form already, and saying it aloud frames the work as an answer to a brief rather than an answer to a problem.
+
+**Not changed, on purpose:** `CLAUDE.md` §0 and `DECISIONS.md` D-8 still reference the brief directly. Those are internal — D-8 is the honest record of realising the project was answering the wrong half of it, and rewriting that history to look more assured would be worse than leaving it.
+
+**No code behaviour changed.** `npx tsc --noEmit` and `npx eslint .` clean.
+
+**Still open:** unchanged — fresh Razorpay account (D-10), migration 002, backup video, dry run.

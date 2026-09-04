@@ -2,15 +2,16 @@
 
 **10 slides, ~5 minutes.** Lead with the trust problem, not the chatbot.
 
-The single most common failure in this track will be pitching "we built a shopping agent". Do not be that. The claim is narrower and stronger: **we built the side that verifies.**
+Pitch the product, not the submission. The judges know which track you entered; what they do not know is why this thing needed to exist. The weakest version of this talk is "we built a shopping agent" — the claim is narrower and stronger than that: **we built the side that verifies.**
 
 ---
 
 ### 1. Title
 
 **OrderMind — a merchant an AI buyer can safely transact with**
-Razorpay AI Buildathon · Track 1
 Live: ordermind-gamma.vercel.app
+
+*Leave the track name off the slide. It is on the submission form; saying it aloud frames the work as an answer to a brief rather than an answer to a problem.*
 
 ---
 

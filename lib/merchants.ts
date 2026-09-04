@@ -1,19 +1,19 @@
 /**
  * merchants.ts — the merchant registry.
  *
- * Track 1 asks for merchants (plural) that are "sellable to AI buyers". A
- * protocol demonstrated against exactly one merchant proves very little: the
- * interesting question is whether a buyer agent can discover several, compare
- * them on equal terms, and choose — which is what actually happens once
- * agent-to-agent commerce is real, and what a single hardcoded storefront can
- * never show.
+ * A protocol demonstrated against exactly one merchant proves very little.
+ * The interesting question is whether a buyer agent can discover several,
+ * compare them on equal terms, and choose — which is what actually happens
+ * once agent-to-agent commerce is real, and what a single hardcoded
+ * storefront can never show. Two merchants is the smallest number that makes
+ * "shopping" mean anything.
  *
  * DEMO SIMPLIFICATION, stated plainly: in production each merchant would be a
  * separate host serving its own /.well-known/agent-commerce.json under its own
  * domain and its own Razorpay account. Here they are two storefronts inside
  * one deployment, distinguished by `?merchant=`, sharing one catalog table
  * partitioned by category and one test-mode Razorpay account. What that costs
- * in realism it buys back in something judges can actually watch happen. The
+ * in realism it buys back in something you can actually watch happen. The
  * parts that matter — separate manifests, separate caps, separate upsell
  * behaviour, and a buyer that treats them as independent counterparties over
  * plain HTTP — are genuinely separate.

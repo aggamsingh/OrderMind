@@ -4,8 +4,8 @@
  * THE PROBLEM THIS SOLVES:
  * lib/guardrails.ts protects a *human* customer from this merchant's own
  * agent (is the total under the cap? did a human actually confirm?). But the
- * moment the buyer is itself an AI — the thing Track 1 is actually about —
- * there is a second, symmetric trust problem the merchant cap cannot answer:
+ * moment the buyer is itself an AI, there is a second, symmetric trust problem
+ * the merchant cap cannot answer:
  *
  *   "This buyer agent says it wants to spend ₹4,000. Is it actually
  *    *allowed* to? By whom? Up to how much? Until when?"
@@ -17,8 +17,9 @@
  * A spend mandate is the buyer's answer: a signed statement from the human
  * (the "principal") delegating bounded authority to their agent — at most
  * this much, for this purpose, until this time, once. This mirrors the
- * mandate concept in the agent-payment protocols this track exists because
- * of (AP2 / UAP / ACP).
+ * mandate concept the agent-payment protocols are converging on (AP2, UAP,
+ * ACP) — deliberately, so this is one implementation of an emerging idea
+ * rather than a private invention nobody else could interoperate with.
  *
  * THE RULE, same spirit as guardrails.ts:
  * The merchant NEVER trusts what a buyer agent *claims* about its own
@@ -27,7 +28,7 @@
  * "my human approved this" in a request body is worth exactly nothing.
  *
  * Signing is HMAC-SHA256 with a shared secret, which is the right shape for
- * a test-mode buildathon: the buyer's issuer and the merchant share a
+ * a test-mode integration: the buyer's issuer and the merchant share a
  * secret out of band. A production deployment would swap this for
  * asymmetric signatures (the principal's wallet signs, the merchant
  * verifies against a public key) — the verify/enforce split here is

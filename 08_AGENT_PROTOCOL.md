@@ -4,7 +4,7 @@ How an autonomous buyer transacts with an OrderMind merchant.
 
 This is written as a specification rather than a description because the point of the exercise is that **any** agent should be able to implement against it — `scripts/buyer-agent.ts` is one client, not the client. Everything below is implemented and live; nothing here is aspirational.
 
-It borrows the *mandate* concept from the agent-payment protocols this track exists because of (AP2, UAP, ACP) rather than inventing new vocabulary.
+It borrows the *mandate* concept from the agent-payment protocols currently converging on this problem (AP2, UAP, ACP) rather than inventing new vocabulary — the point is to be one implementation of an emerging idea, not a private dialect.
 
 ---
 

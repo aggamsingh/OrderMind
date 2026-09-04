@@ -2,7 +2,6 @@
 
 **A merchant that an AI buyer can safely transact with.**
 
-Built for Razorpay's AI Buildathon, Track 1 — AI Growth & Agentic Commerce.
 Live: **https://ordermind-gamma.vercel.app**
 
 ---
@@ -96,6 +95,11 @@ Volunteered rather than buried — each one is disclosed in the code or the mani
 | `02_ARCHITECTURE.md` | both request flows, schema, the order checks run in |
 | `04_AUDIT_TRAIL_SAMPLE.md` | real exported audit rows, not illustrative ones |
 | `05_TEST_CASES.md` | the test matrix and its run log |
+| `08_AGENT_PROTOCOL.md` | the mandate + discovery spec, written so another agent could implement it |
 | `06_DEMO_SCRIPT.md` | the 5-minute demo, with a pre-flight checklist |
 | `BUILD_LOG.md` | day-by-day, including the bugs and what caused them |
 | `DECISIONS.md` | every non-trivial choice, with the alternatives and the corrections |
+
+---
+
+<sub>Submitted to the Razorpay AI Buildathon (Track 1 — AI Growth & Agentic Commerce). Built on Razorpay test-mode APIs; no real money moves.</sub>
