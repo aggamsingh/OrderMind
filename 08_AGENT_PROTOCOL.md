@@ -121,3 +121,53 @@ A merchant that silently drops a refused agent order leaves the buyer's principa
 ---
 
 **Version 0.1.** Implemented in `lib/mandate.ts`, `lib/revocation.ts`, `lib/agent-trust.ts`, `lib/guardrails.ts`, and `app/api/agent/*`. Verified by `scripts/test-mandates.ts` (28 assertions) and exercised end-to-end by `scripts/buyer-agent.ts`.
+
+---
+
+## 8. AP2 interoperability
+
+The native mandate above is HMAC-signed with a shared secret. That works when the buyer's issuer and this merchant agreed one out of band, and is useless the moment a buyer this merchant has never met wants to pay — there is no secret to share.
+
+So a second credential format is accepted, aligned with Google's [Agent Payments Protocol](https://ap2-protocol.org/ap2/payment_mandate/) Payment Mandate:
+
+```http
+X-Agent-Mandate: <compact JWS, alg=ES256>
+```
+
+```jsonc
+{
+  "vct": "mandate.payment.open.1",
+  "transaction_id": "<single-use nonce>",
+  "payee":  { "id": "chai-point-express", "name": "Chai Point Express" },
+  "payment_amount": { "amount": 25000, "currency": "INR" },
+  "payment_instrument": { "id": "razorpay-checkout", "type": "psp_hosted_checkout" },
+  "constraints": [ { "max_amount": { "amount": 25000, "currency": "INR" }, "purpose": "..." } ],
+  "sub": "principal@example.com",
+  "agent_id": "buyer-agent://…",
+  "iat": 1757000000,
+  "exp": 1757000900
+}
+```
+
+Verify it against **`/.well-known/jwks.json`** — the merchant's public P-256 key. No shared secret is required, which is the entire point.
+
+### What is and is not implemented
+
+Stated precisely, because a vague interop claim is worse than none:
+
+| | |
+|---|---|
+| ✅ | AP2 Payment Mandate field vocabulary and `vct` values |
+| ✅ | **ES256** (ECDSA P-256 + SHA-256) asymmetric signing, verifiable via published JWKS |
+| ✅ | `constraints` carrying the ceiling this merchant actually enforces |
+| ❌ | **SD-JWT selective disclosure.** AP2 wraps these claims in an SD-JWT with hashed disclosures so a payer can reveal some fields and withhold others. This emits a plain compact JWS with the same claims, so a strict AP2 verifier expecting `~`-separated disclosures will not accept it. |
+
+The honest description is **"AP2-aligned, ES256-signed, selective disclosure not implemented"** — not "AP2 compliant".
+
+### Both formats land in the same guardrails
+
+An AP2 mandate is converted to the native `SpendMandate` shape immediately after its signature verifies, so **every** downstream check — revocation, agent standing, nonce replay, stricter-of, price re-derivation — is byte-for-byte the same code. A second credential format must never become a second, weaker path to the money.
+
+`alg` is pinned to ES256 and never read from the token to choose a verifier — that is the classic JWT algorithm-confusion attack, and `alg: "none"` is refused outright.
+
+Verified in `scripts/test-mandates.ts` and end to end against a live order: a valid AP2 mandate is accepted, an under-authorised one is refused `402` on amount, and one whose amount was rewritten after signing is refused `403 bad_signature`.

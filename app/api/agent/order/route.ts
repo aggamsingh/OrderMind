@@ -4,6 +4,7 @@ import { getCatalogByIds } from "@/lib/catalog";
 import { logAudit } from "@/lib/audit";
 import { computeCartTotalPaise, evaluateMandate } from "@/lib/guardrails";
 import { verifyMandate, mandateForAudit, signReceipt } from "@/lib/mandate";
+import { verifyAP2, ap2ToSpendMandate } from "@/lib/ap2";
 import { createRazorpayOrder } from "@/lib/razorpay";
 import { checkAgentStanding } from "@/lib/agent-trust";
 import { getMerchant } from "@/lib/merchants";
@@ -61,7 +62,26 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const verification = verifyMandate(mandateHeader);
+  // Two accepted proofs of authority, tried in order:
+  //   1. this project's native HMAC mandate (shared secret, lib/mandate.ts)
+  //   2. an AP2-aligned ES256 mandate (asymmetric, lib/ap2.ts)
+  //
+  // The second is what lets a buyer this merchant has never exchanged a
+  // secret with transact at all. Both converge on the SAME SpendMandate
+  // shape, so every downstream check — revocation, standing, replay,
+  // stricter-of — is identical regardless of how authority was proven. A
+  // second credential format must never become a second, weaker code path.
+  let verification = verifyMandate(mandateHeader);
+  let mandateFormat: "native_hmac" | "ap2_es256" = "native_hmac";
+
+  if (!verification.valid) {
+    const ap2 = verifyAP2(mandateHeader);
+    if (ap2.valid) {
+      verification = { valid: true, mandate: ap2ToSpendMandate(ap2.claims) };
+      mandateFormat = "ap2_es256";
+    }
+  }
+
   if (!verification.valid) {
     // Logged against a session so the refusal is visible in the same audit
     // trail as everything else — a refused agent must still leave a trace.
@@ -185,6 +205,7 @@ export async function POST(req: NextRequest) {
     action: "agent_order_requested",
     detail: {
       ...mandateForAudit(mandate),
+      mandate_format: mandateFormat,
       requested_items: body.items ?? [],
       accept_upsell_catalog_id: body.accept_upsell_catalog_id ?? null,
       buyer_note: body.buyer_note ?? null,

@@ -30,7 +30,7 @@ Both paths re-derive every price from the database, gate every money movement se
 ### For an AI buyer
 
 1. **Discovery** — one well-known URL publishes what the merchant sells and what it will refuse, so a buyer learns the limits before spending a request rather than by being rejected.
-2. **Mandate** — the buyer presents a signed statement of what its human authorised: a ceiling, a purpose, an expiry, single use. The merchant verifies the signature itself; what a buyer *claims* about its own authority counts for nothing.
+2. **Mandate** — the buyer presents a signed statement of what its human authorised: a ceiling, a purpose, an expiry, single use. The merchant verifies the signature itself; what a buyer *claims* about its own authority counts for nothing. Two formats are accepted: a native HMAC one, and an **AP2-aligned ES256** one that a buyer with no shared secret can prove against the published JWKS.
 3. **The stricter limit binds** — an order must satisfy both the buyer's mandate and the merchant's own autonomous cap.
 4. **Refusal is a feature** — overreach, a tampered ceiling, a reused mandate, a revoked mandate, or a runaway retry loop are each refused with a reason, and the reason survives in the audit trail.
 5. **Reversal** — an agent can refund its own mistake, bounded by the same discipline as a charge.

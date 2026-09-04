@@ -22,6 +22,7 @@ process.env.MANDATE_SIGNING_SECRET ||= "test-only-signing-secret-not-a-real-key"
 
 import { issueMandate, verifyMandate, signReceipt, verifyReceipt } from "../lib/mandate";
 import { evaluateMandate, evaluateRefund } from "../lib/guardrails";
+import { toAP2PaymentMandate, signAP2, verifyAP2, ap2ToSpendMandate } from "../lib/ap2";
 import { SPEND_CAP_PAISE, type Order } from "../lib/types";
 
 let passed = 0;
@@ -236,6 +237,38 @@ console.log("--- receipts ---");
   decoded.total_paise = 1;
   const forged = `${Buffer.from(JSON.stringify(decoded)).toString("base64url")}.${sig}`;
   check("a receipt edited to understate the amount is rejected", verifyReceipt(forged).valid === false);
+}
+
+console.log("--- AP2 interop: ES256 mandates from a buyer with no shared secret ---");
+{
+  const native = mandate({ max: 25000 }).mandate;
+  const claims = toAP2PaymentMandate(native, { id: "chai-point-express", name: "Chai Point Express" });
+  const jwt = signAP2(claims);
+
+  check("an AP2 mandate this merchant signed verifies", verifyAP2(jwt).valid === true);
+  check("it carries AP2's own vct value", claims.vct === "mandate.payment.open.1");
+  check(
+    "the ceiling survives the mapping into AP2 and back",
+    ap2ToSpendMandate(claims).max_amount_paise === 25000
+  );
+  check(
+    "the amount lands in AP2's payment_amount shape",
+    claims.payment_amount.amount === 25000 && claims.payment_amount.currency === "INR"
+  );
+
+  // The attack that matters for an asymmetric token: rewrite the amount and
+  // keep the original signature.
+  const [h, p2, sig] = jwt.split(".");
+  const decoded = JSON.parse(Buffer.from(p2, "base64url").toString("utf8"));
+  decoded.payment_amount.amount = 9_999_900;
+  const forged = h + "." + Buffer.from(JSON.stringify(decoded)).toString("base64url") + "." + sig;
+  check("an AP2 mandate with a rewritten amount is rejected", verifyAP2(forged).valid === false);
+
+  // Algorithm confusion: a token declaring it needs no signature at all.
+  const noneHeader = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
+  check("alg=none is refused rather than trusted", verifyAP2(noneHeader + "." + p2 + ".").valid === false);
+
+  check("garbage is rejected without throwing", verifyAP2("not-a-jwt").valid === false);
 }
 
 console.log(`\n${passed} passed, ${failed} failed`);

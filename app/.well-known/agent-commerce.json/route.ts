@@ -109,10 +109,35 @@ export async function GET(req: NextRequest) {
        */
       mandate: {
         required: true,
-        format: "hmac-sha256-jws-compact",
         header: "X-Agent-Mandate",
         enforced_limits: ["max_amount_paise", "expires_at", "currency", "single_use_nonce"],
         binding_rule: "stricter_of(buyer_mandate, merchant_cap)",
+        /**
+         * Two accepted formats. The AP2-aligned one exists so a buyer this
+         * merchant has never exchanged a secret with can still prove
+         * authority — verifiable against the published JWKS alone.
+         */
+        accepted_formats: [
+          {
+            id: "ordermind.hmac.v1",
+            signing: "HMAC-SHA256",
+            note: "Native format. Requires a shared secret agreed out of band.",
+          },
+          {
+            id: "ap2.payment.open.1",
+            signing: "ES256",
+            jwks: "/.well-known/jwks.json",
+            spec: "https://ap2-protocol.org/ap2/payment_mandate/",
+            /**
+             * Stated precisely rather than claiming blanket compliance: the
+             * field vocabulary and ES256 signing follow the AP2 spec, but
+             * SD-JWT selective disclosure is not implemented, so a strict
+             * AP2 verifier expecting hashed disclosures will not accept
+             * tokens this merchant issues.
+             */
+            conformance: "ap2-aligned; SD-JWT selective disclosure not implemented",
+          },
+        ],
       },
       /** Exactly one bounded retry per failed payment. A buyer agent that retries harder is refused. */
       max_payment_retries: MAX_RETRIES,
