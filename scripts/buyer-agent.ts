@@ -230,7 +230,7 @@ async function compareAndBuy() {
   }
   console.log(`    ${c.green("ACCEPTED")} — order ${data.order_id}`);
   console.log(`    total:   ${c.bold(rupees(data.total_paise))}`);
-  console.log(`    pay at:  ${c.cyan(data.payment_link)}`);
+  console.log(`    pay at:  ${c.cyan(`${MERCHANT}${data.payment_url}`)}`);
   const check = verifyReceipt(data.signed_receipt);
   console.log(`    receipt: ${check.valid ? c.green("verified") : c.red("INVALID")}`);
   await watchSettlement(data.order_id, 2, 3000);
@@ -420,7 +420,7 @@ async function splitBasket() {
       name: leg.name,
       orderId: data.order_id,
       total: data.total_paise,
-      link: data.payment_link,
+      link: data.payment_url,
     });
     console.log(`    ${c.green("accepted")} — ${data.order_id}`);
   }
@@ -718,7 +718,7 @@ async function placeOrder(
   console.log(`    ${c.green("ACCEPTED")} — order ${data.order_id}`);
   console.log(`    total:   ${c.bold(rupees(data.total_paise))}`);
   console.log(`    binding: ${data.binding_limit} at ${rupees(data.binding_limit_paise)}`);
-  console.log(`    pay at:  ${c.cyan(data.payment_link)}`);
+  console.log(`    pay at:  ${c.cyan(`${MERCHANT}${data.payment_url}`)}`);
 
   // ---- 6. Verify the merchant's receipt rather than taking its word ----
   const check = verifyReceipt(data.signed_receipt);
@@ -746,11 +746,13 @@ async function placeOrder(
  * charged", and an agent that cannot tell those apart cannot reconcile its own
  * spending against the mandate it was granted.
  *
- * The merchant declares in its manifest that capture happens on a hosted page
- * (Razorpay S2S is not enabled on a standard test account), so this will sit
- * at `payment_pending` until someone completes the link. That is the honest
- * shape of the current rail — the buyer watches rather than assumes, and the
- * moment settlement happens by any route, it finds out.
+ * The merchant declares in its manifest that capture is `merchant_hosted` —
+ * completed through Razorpay Checkout on a page the merchant serves. Full
+ * hands-off capture would need Razorpay's S2S APIs, which are gated behind
+ * merchant approval, so this sits at `payment_pending` until the checkout is
+ * completed. That is the honest shape of the current rail: the buyer watches
+ * rather than assumes, and the moment settlement happens by any route, it
+ * finds out.
  */
 async function watchSettlement(orderId: string, attempts = 3, intervalMs = 4000) {
   say("Watching for settlement", `GET /api/agent/order/${orderId.slice(0, 8)}…`);
@@ -776,7 +778,7 @@ async function watchSettlement(orderId: string, attempts = 3, intervalMs = 4000)
   console.log(
     c.dim(
       "    Still awaiting capture. The merchant's manifest declares capture as\n" +
-        "    'hosted_redirect' — a human completes the payment link, and this agent\n" +
+        "    'merchant_hosted' — the checkout page is completed, and this agent\n" +
         "    would learn of it on the next poll. Nothing is assumed either way."
     )
   );

@@ -53,29 +53,33 @@ export async function GET(req: NextRequest) {
       processor: "razorpay",
       mode: "test",
       methods: ["card", "upi", "netbanking", "wallet"],
-      settlement: "payment_link",
+      settlement: "razorpay_order",
       /**
        * How far a buyer agent can get WITHOUT a human, stated honestly.
        *
        * Everything commercial is autonomous: discovery, pricing, the upsell
        * decision, mandate verification, order creation, and a signed receipt.
-       * Settlement is not: capture happens on Razorpay's hosted payment page.
        *
-       * This is a rail limitation, not a design choice. Razorpay's
-       * server-to-server payment APIs (payments.createPaymentJson and
-       * payments.createUpi) both return "requested URL was not found" on a
-       * standard test account — S2S is gated behind merchant approval.
-       * Verified by calling both against this account, not assumed.
+       * Capture is `merchant_hosted`: the payment is completed through
+       * Razorpay Checkout on a page THIS merchant serves (/pay/{order_id}),
+       * not on a redirect to Razorpay's own hosted page. That distinction
+       * matters to a buyer agent, because a merchant-hosted checkout is
+       * instrumentable and delegable in ways a third-party redirect is not.
        *
-       * Declared here so a buyer agent can decide up front whether this
-       * merchant can complete its workflow unattended, rather than
-       * discovering a human-shaped gap after it has already committed.
+       * What is still NOT autonomous, stated plainly: completing a card
+       * payment without any human present needs Razorpay's
+       * server-to-server payment APIs, and those are gated behind merchant
+       * approval — payments.createPaymentJson and payments.createUpi both
+       * return "requested URL was not found" on a standard test account.
+       * Verified by calling both, not assumed. With S2S enabled, the same
+       * order created here would be payable end to end with no page at all.
        */
       autonomy: {
         negotiation: "autonomous",
         authorization: "autonomous",
-        capture: "hosted_redirect",
-        capture_blocked_by: "razorpay_s2s_not_enabled_on_test_account",
+        capture: "merchant_hosted",
+        capture_endpoint: "/pay/{order_id}",
+        full_autonomy_blocked_by: "razorpay_s2s_not_enabled_on_test_account",
         note: "Poll GET /api/agent/order/{order_id} to observe settlement once it completes.",
       },
     },

@@ -309,7 +309,7 @@ async function placeOrder(opts: {
     kind: "accepted",
     title: "Order accepted",
     detail: `₹${(data.total_paise / 100).toFixed(2)} · binding limit: ${data.binding_limit} at ₹${(data.binding_limit_paise / 100).toFixed(2)}`,
-    data: { order_id: data.order_id, payment_link: data.payment_link, session_id: data.session_id },
+    data: { order_id: data.order_id, payment_url: data.payment_url, session_id: data.session_id },
   });
   await pause(400);
 
@@ -321,7 +321,7 @@ async function placeOrder(opts: {
     detail: check.valid
       ? "Merchant's signed receipt matches what I agreed to — reconciled against my mandate."
       : "Merchant's receipt did not verify.",
-    data: { payment_link: data.payment_link, session_id: data.session_id },
+    data: { payment_url: data.payment_url, session_id: data.session_id },
   });
   return true;
 }

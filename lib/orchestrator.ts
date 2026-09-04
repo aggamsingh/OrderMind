@@ -19,7 +19,7 @@ import { getCatalogByIds, searchCatalog } from "./catalog";
 import { logAudit } from "./audit";
 import { serializeError } from "./errors";
 import { evaluateSpendCap, evaluateRetry, computeCartTotalPaise } from "./guardrails";
-import { createRazorpayPaymentLink } from "./razorpay";
+import { createRazorpayOrder } from "./razorpay";
 import type { CartItem, Order, Session } from "./types";
 
 const MAX_TOOL_ITERATIONS = 6; // hard stop so a runaway tool-call loop can't spin forever
@@ -490,21 +490,19 @@ async function createRazorpayOrderAndLog(
   const order = orderRow as Order;
 
   try {
-    // See lib/razorpay.ts header comment (D-7): the Payment Link's own
-    // order_id doesn't exist yet at creation time — Razorpay assigns it
-    // lazily once checkout starts — so there's nothing to store here beyond
-    // the payment_link_id itself. The webhook handler resolves the real
-    // order_id later, when it actually shows up.
-    const paymentLink = await createRazorpayPaymentLink(
-      totalPaise,
-      order.id,
-      "OrderMind — Chai Point Express order"
-    );
+    // Orders API, not Payment Links (see lib/razorpay.ts createRazorpayOrder).
+    // We create the order ourselves, so its id is known here and now — the
+    // webhook resolves by direct lookup instead of chasing a receipt, and
+    // settlement happens on a page this merchant controls.
+    const rzpOrder = await createRazorpayOrder(totalPaise, order.id, {
+      internal_order_id: order.id,
+      channel: "human_chat",
+    });
 
     await supabase
       .from("orders")
       .update({
-        razorpay_payment_link_id: paymentLink.id,
+        razorpay_order_id: rzpOrder.id,
         status: "payment_pending",
         updated_at: new Date().toISOString(),
       })
@@ -518,18 +516,19 @@ async function createRazorpayOrderAndLog(
       actor: "orchestrator",
       action: "create_order",
       detail: {
-        razorpay_payment_link_id: paymentLink.id,
+        razorpay_order_id: rzpOrder.id,
         total_paise: totalPaise,
       },
     });
 
+    const payUrl = `/pay/${order.id}`;
     return {
       toolResultText: `Order created. Total ₹${(totalPaise / 100).toFixed(
         2
-      )}. Payment link: ${paymentLink.short_url}. Tell the customer to complete payment there.`,
+      )}. Payment page: ${payUrl}. Tell the customer to complete payment there.`,
       sessionStatus: sessionStatusAfter,
       pendingConfirmation: null,
-      paymentLink: paymentLink.short_url,
+      paymentLink: payUrl,
       order: { id: order.id, status: "payment_pending", retryCount: 0 },
     };
   } catch (err) {
@@ -607,19 +606,22 @@ async function execRetryPayment(
     // order.id as a clean, unmangled prefix — app/api/webhooks/razorpay
     // recovers it via fetchRazorpayOrderReceipt() + a UUID-prefix match,
     // which only works if the real order.id appears intact at the start.
-    const paymentLink = await createRazorpayPaymentLink(
-      order.total_paise,
-      `${order.id}-1`,
-      "OrderMind — Chai Point Express order (retry)"
-    );
+    const rzpOrder = await createRazorpayOrder(order.total_paise, `${order.id}-1`, {
+      internal_order_id: order.id,
+      channel: "human_chat_retry",
+    });
     // No razorpay_order_id to store yet here either — same lazy-assignment
     // reason as the initial creation path (see lib/razorpay.ts). The
     // webhook handler resolves it when the retry's payment event arrives.
-    await supabase.from("orders").update({ razorpay_payment_link_id: paymentLink.id }).eq("id", order.id);
+    // The retry gets a FRESH Razorpay order, so razorpay_order_id must move
+    // with it — otherwise the retry's webhook would resolve to the original,
+    // already-failed order (the same class of bug as D-7).
+    await supabase.from("orders").update({ razorpay_order_id: rzpOrder.id }).eq("id", order.id);
 
+    const retryUrl = `/pay/${order.id}`;
     return {
-      toolResultText: `Retry allowed. New payment link: ${paymentLink.short_url}.`,
-      paymentLink: paymentLink.short_url,
+      toolResultText: `Retry allowed. Payment page: ${retryUrl}.`,
+      paymentLink: retryUrl,
       order: { id: order.id, status: "retried", retryCount: order.retry_count + 1 },
     };
   } catch (err) {

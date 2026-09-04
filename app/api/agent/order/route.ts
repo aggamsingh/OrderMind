@@ -4,7 +4,7 @@ import { getCatalogByIds } from "@/lib/catalog";
 import { logAudit } from "@/lib/audit";
 import { computeCartTotalPaise, evaluateMandate } from "@/lib/guardrails";
 import { verifyMandate, mandateForAudit, signReceipt } from "@/lib/mandate";
-import { createRazorpayPaymentLink } from "@/lib/razorpay";
+import { createRazorpayOrder } from "@/lib/razorpay";
 import { checkAgentStanding } from "@/lib/agent-trust";
 import { getMerchant } from "@/lib/merchants";
 import { checkRevocation, recordObservedMandate } from "@/lib/revocation";
@@ -318,16 +318,16 @@ export async function POST(req: NextRequest) {
   const order = orderRow as Order;
 
   try {
-    const paymentLink = await createRazorpayPaymentLink(
-      totalPaise,
-      order.id,
-      `OrderMind — ${merchant.name} (autonomous agent order)`
-    );
+    const rzpOrder = await createRazorpayOrder(totalPaise, order.id, {
+      internal_order_id: order.id,
+      merchant: merchant.id,
+      channel: "agent_to_agent",
+    });
 
     await supabase
       .from("orders")
       .update({
-        razorpay_payment_link_id: paymentLink.id,
+        razorpay_order_id: rzpOrder.id,
         status: "payment_pending",
         updated_at: new Date().toISOString(),
       })
@@ -341,7 +341,7 @@ export async function POST(req: NextRequest) {
       action: "create_order",
       detail: {
         total_paise: totalPaise,
-        razorpay_payment_link_id: paymentLink.id,
+        razorpay_order_id: rzpOrder.id,
         channel: "agent_to_agent",
       },
     });
@@ -357,6 +357,8 @@ export async function POST(req: NextRequest) {
       issued_at: new Date().toISOString(),
     };
 
+    const payUrl = `/pay/${order.id}`;
+
     return NextResponse.json({
       accepted: true,
       order_id: order.id,
@@ -369,7 +371,7 @@ export async function POST(req: NextRequest) {
         unit_price_paise: c.unit_price_paise,
         is_upsell: c.is_upsell ?? false,
       })),
-      payment_link: paymentLink.short_url,
+      payment_url: payUrl,
       binding_limit: decision.bindingLimit,
       binding_limit_paise: decision.bindingLimitPaise,
       /** Verifiable proof of what was agreed, for the buyer's own reconciliation. */

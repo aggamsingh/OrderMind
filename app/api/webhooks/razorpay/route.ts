@@ -41,16 +41,20 @@ export async function POST(req: NextRequest) {
   }
 
   if (!order) {
-    // BUG FOUND LIVE, FIXED (see BUILD_LOG.md Day 6 / DECISIONS.md D-7):
-    // this app never pre-populates razorpay_order_id at order-creation time
-    // — Razorpay only assigns a Payment Link's order id lazily, once
-    // checkout actually starts — so the direct lookup above almost never
-    // hits on a webhook's first arrival for a given order. Resolve it here
-    // instead, via the auto-generated order's `receipt` field, which
-    // Razorpay copies verbatim from the `reference_id` this app passed at
-    // payment-link creation (always our own orders.id, optionally with a
-    // short retry suffix — see lib/orchestrator.ts) — confirmed live by
-    // fetching a real paid order back and finding our order.id in `receipt`.
+    // LEGACY FALLBACK, kept deliberately.
+    //
+    // Orders created through the Payment Links path (before this project
+    // moved to the Orders API) never had razorpay_order_id populated at
+    // creation time — Razorpay assigned the link's order id lazily, once
+    // checkout started, so the direct lookup above could not hit. Those
+    // orders are resolved here instead, via the auto-generated order's
+    // `receipt`, which Razorpay copies from the `reference_id` we passed
+    // (our own orders.id, optionally with a retry suffix) — see D-7.
+    //
+    // New orders never reach this branch: the Orders API path stores the
+    // real order id up front, so the fast path above matches. Kept anyway,
+    // because a webhook for an order placed before the switch is still a
+    // real payment and must still reconcile.
     const receipt = await fetchRazorpayOrderReceipt(razorpayOrderId);
     const resolvedOrderId = receipt?.match(LEADING_UUID_RE)?.[0];
     if (resolvedOrderId) {

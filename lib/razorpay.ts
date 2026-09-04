@@ -95,3 +95,49 @@ export function verifyWebhookSignature(rawBody: string, signature: string): bool
     return false;
   }
 }
+
+/**
+ * Creates a Razorpay Order directly — the settlement path this project now
+ * uses, replacing Payment Links.
+ *
+ * THIS IS NOT A REVERSAL OF D-7, IT IS ITS RESOLUTION.
+ *
+ * D-7 removed a standalone `orders.create()` call because, at the time, it
+ * ran *alongside* `paymentLink.create()`. That produced two unrelated orders:
+ * the one we made and stored, and the one the Payment Link silently generated
+ * for itself — and only the latter ever appeared in a webhook. Storing the
+ * wrong one broke reconciliation for every real payment.
+ *
+ * Removing Payment Links entirely removes the ambiguity. There is now exactly
+ * one order, we create it, and we know its id before the customer pays. The
+ * webhook's `order_id` matches `orders.razorpay_order_id` by direct lookup,
+ * with no receipt-chasing indirection at all.
+ *
+ * Two other things this buys, both real:
+ *   - **Capture becomes autonomous-capable.** Payment Links can only be paid
+ *     on Razorpay's hosted page. An Order can be paid through Checkout on a
+ *     page we control, which is what closes the "hosted_redirect" caveat.
+ *   - **It removes the 30-payment-link lifetime ceiling** that had made this
+ *     test account unable to place any order at all (D-10). Orders are not
+ *     capped that way — verified by calling both against the exhausted
+ *     account: `paymentLink.create` fails, `orders.create` succeeds.
+ *
+ * `receipt` carries our own orders.id so a human reading the Razorpay
+ * dashboard can trace any payment back to a row in this database.
+ */
+export async function createRazorpayOrder(totalPaise: number, receipt: string, notes?: Record<string, string>) {
+  const razorpay = getRazorpayClient();
+  return razorpay.orders.create({
+    amount: totalPaise,
+    currency: "INR",
+    receipt,
+    notes,
+  });
+}
+
+/** The public key id, safe to hand to the browser — Razorpay Checkout needs it. */
+export function getRazorpayKeyId(): string {
+  const keyId = process.env.RAZORPAY_KEY_ID;
+  if (!keyId) throw new Error("Missing RAZORPAY_KEY_ID in .env.local.");
+  return keyId;
+}

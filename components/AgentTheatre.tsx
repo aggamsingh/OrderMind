@@ -87,7 +87,7 @@ export default function AgentTheatre() {
   }
 
   const outcome = steps.find((s) => s.kind === "refused" || s.kind === "verified");
-  const paymentLink = steps.find((s) => s.data?.payment_link)?.data?.payment_link as string | undefined;
+  const paymentLink = steps.find((s) => s.data?.payment_url)?.data?.payment_url as string | undefined;
   const sessionId = steps.find((s) => s.data?.session_id)?.data?.session_id as string | undefined;
 
   return (
@@ -220,7 +220,7 @@ export default function AgentTheatre() {
           <div className="mt-3 flex flex-wrap gap-3 text-xs">
             {paymentLink && (
               <a href={paymentLink} target="_blank" rel="noopener noreferrer" className="font-medium underline">
-                Open Razorpay payment link →
+                Open the checkout page →
               </a>
             )}
             {sessionId && (
