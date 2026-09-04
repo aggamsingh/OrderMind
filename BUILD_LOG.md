@@ -524,3 +524,33 @@ This is the first time this project has proven the complete real-world path: Raz
 **No code behaviour changed.** `npx tsc --noEmit` and `npx eslint .` clean.
 
 **Still open:** unchanged — fresh Razorpay account (D-10), migration 002, backup video, dry run.
+
+---
+
+## [Day 10] — 2026-09-04 (the four real improvements, built in one pass)
+
+**Worked on:** Founder chose to build all four items I had listed as post-deadline work, with submission tomorrow. Sequenced so each was independently shippable and a half-finished later item could not break an earlier one.
+
+**1. Autonomous capture — Orders API + a checkout page we serve.** Settlement now happens on `/pay/{order_id}` via Razorpay Checkout against an order this merchant creates, and Payment Links are gone from every path.
+
+This **resolves D-7 rather than reverting it**. D-7 removed a standalone `orders.create()` because it ran *alongside* `paymentLink.create()`, producing two unrelated orders where only the Payment Link's own — lazily assigned, never known to us — appeared in webhooks. Removing Payment Links removes the ambiguity entirely: one order, its id known before the customer pays, matched by direct lookup. The receipt-chasing path stays as a documented fallback for orders placed before the switch.
+
+It also **lifted the D-10 blocker outright**. A real order was placed on the same account that had exhausted its 30 payment links minutes earlier — Orders are not capped that way. The live URL is unblocked without an account swap.
+
+And it narrows the honesty caveat rather than erasing it: the manifest now says `capture: "merchant_hosted"` with a `capture_endpoint`, not `hosted_redirect`. Full hands-off capture still needs Razorpay S2S, still gated behind merchant approval, and the manifest still says so.
+
+**2. Principal console authentication — a real hole, not a checkbox.** `/api/principal/*` read the acting principal straight out of the request, so anyone who knew an email address could list a stranger's mandates, revoke one, or fire their kill switch and stop their agent mid-purchase. Identity now comes from an HMAC-signed httpOnly cookie; listing is scoped to it, granting mints only in the signer's name, and revoking additionally requires the mandate to be theirs — otherwise a valid session could revoke anything by guessing a nonce. Password comparison is timing-safe, and a wrong password is indistinguishable from an unconfigured one.
+
+**3. AP2 interoperability — researched before written.** The native mandate is HMAC with a shared secret, which is useless for a buyer this merchant has never met. Read the actual AP2 Payment Mandate spec (field names, `vct` values, **ES256**) rather than recalling it, because inventing a schema and calling it AP2 would be a false interop claim in a judged submission. Implemented the field vocabulary and genuine ES256 asymmetric signing, published the public key at `/.well-known/jwks.json`, and accepted AP2 tokens as a second proof of authority.
+
+Scoped honestly everywhere it is mentioned: **SD-JWT selective disclosure is not implemented**, so a strict AP2 verifier will reject these tokens. The claim is "AP2-aligned, ES256-signed, selective disclosure not implemented" — not "AP2 compliant".
+
+Both formats converge on the same `SpendMandate` the moment a signature verifies, so revocation, standing, replay, stricter-of and price re-derivation are identical code. A second credential format must never become a second, weaker path to the money. `alg` is pinned and never read from the token to choose a verifier; `alg: "none"` is refused.
+
+**Two silent bugs caught while building it:** a hand-rolled DER→JOSE signature conversion producing tokens that verified nowhere (Node's `ieee-p1363` encoding already *is* the JOSE shape, so the conversion was deleted rather than debugged), and an ephemeral dev keypair regenerated on every call, so the merchant could not verify its own signatures. Both would have looked like working code — the tamper tests still "passed", because verification failed for everything.
+
+**4. Separate merchants — made real as configuration.** Each merchant can now name env vars holding its own Razorpay credentials and public origin. Set them and it settles into its own account on its own host. The manifest declares which: `settlement_account` is `"dedicated"` or `"shared_with_deployment"`, so a reviewer can tell whether two storefronts are two businesses or one wearing two names. Credentials only count as a merchant's own when both halves are present, so a half-configured pair cannot mix one merchant's key id with another's secret.
+
+**Verified:** 44 unit assertions (9 guardrails + 35 mandates/refunds/AP2). Live: a native-mandate order accepted with a verified receipt; over-mandate 402, tampered 403, replayed 409; an AP2-mandate order accepted, an under-authorised AP2 mandate refused 402, and an AP2 mandate with the amount rewritten refused 403.
+
+**Still open, all founder-side:** apply `supabase/migrations/002_*.sql` (revocation and refunds remain unverified live without it), record the backup video, and do a timed dry run. A fresh Razorpay account is no longer required to place orders, though it is still the cleanest way to demo a *capture* end to end.
